@@ -1,0 +1,88 @@
+{
+  "built_at_utc": "2026-11-23 02:09",
+  "raiavl": {
+    "last_month_with_data": "2026-10",
+    "future_months_dropped": 2,
+    "state_months_blank": 38,
+    "no_especificado_units": 2165,
+    "n_states": 32,
+    "first_month": "2016-01"
+  },
+  "fleet": {
+    "years": [
+      2014,
+      2025
+    ],
+    "entities": [
+      "Nuevo Le\u00f3n"
+    ],
+    "years_where_sources_do_not_sum_to_total": [],
+    "energy_source_detail_years": [
+      2024,
+      2025
+    ],
+    "total_fleet_by_year": {
+      "2014": 1797854,
+      "2015": 1865729,
+      "2016": 1997592,
+      "2017": 2129728,
+      "2018": 2269029,
+      "2019": 2385644,
+      "2020": 2476062,
+      "2021": 2568278,
+      "2022": 2686334,
+      "2023": 2232607,
+      "2024": 2447673,
+      "2025": 2698327
+    },
+    "largest_yoy_moves": {
+      "2023": -0.169,
+      "2025": 0.102,
+      "2024": 0.096
+    }
+  },
+  "grid": {
+    "rows_parsed": 414383,
+    "rows_skipped": 1728,
+    "areas": [
+      "NES"
+    ],
+    "rows_dropped_hour25": 31,
+    "publications_per_hour_mean": 4.39,
+    "rows_after_dedupe": 94481,
+    "rows_implausible_dropped": 0,
+    "first_day": "2016-01-29",
+    "last_day": "2026-11-08",
+    "days_missing": 0,
+    "days_with_fewer_than_24_hours": 7,
+    "preliminary_days": 42,
+    "preliminary_from": "2026-09-28",
+    "comparable_from": "2020-01-01",
+    "mean_demand_mw_by_year": {
+      "2016": 9506.0,
+      "2017": 10209.0,
+      "2018": 10320.0,
+      "2019": 11278.0,
+      "2020": 6122.0,
+      "2021": 6524.0,
+      "2022": 6881.0,
+      "2023": 7050.0,
+      "2024": 7170.0,
+      "2025": 7277.0,
+      "2026": 7752.0
+    },
+    "mean_generation_mw_by_year": {
+      "2016": 9506.0,
+      "2017": 10210.0,
+      "2018": 10217.0,
+      "2019": 11161.0,
+      "2020": 10565.0,
+      "2021": 9989.0,
+      "2022": 10324.0,
+      "2023": 10659.0,
+      "2024": 10297.0,
+      "2025": 10160.0,
+      "2026": 11073.0
+    }
+  }
+}

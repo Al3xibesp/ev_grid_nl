@@ -1,0 +1,6 @@
+# ev_grid_nl - tested 2026-11-24 on Python 3.13
+streamlit==1.67.0
+plotly==7.1.0
+pandas==3.0.6
+numpy==2.5.5
+openpyxl==3.1.5
