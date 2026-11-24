@@ -22,6 +22,7 @@ st.set_page_config(page_title="EVs and the Nuevo León grid", page_icon="⚡", l
 TECH_LABEL = {"bev": "Battery-electric (BEV)", "phev": "Plug-in hybrid (PHEV)", "hev": "Hybrid (HEV)"}
 TECH_COLOR = {"bev": C.COLORS["BEV"], "phev": C.COLORS["PHEV"], "hev": C.COLORS["HEV"]}
 NL = "Nuevo León"
+NL_BLUE = C.COLORS["BEV"]                      # Nuevo León highlight colour (tab 2)
 HOURS = [f"{h:02d}:00" for h in range(24)]
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -63,8 +64,8 @@ def fmt(n, d=0):
 
 
 def coverage(title: str, items: list[str]) -> None:
-    with st.container(border=True):
-        st.markdown(f"**{title}**")
+    """Caveats live in a closed expander: available on demand, not in the way."""
+    with st.expander(title):
         for t in items:
             st.markdown(f"- {t}")
 
@@ -86,7 +87,7 @@ with st.sidebar:
         f"{gq['comparable_from']}; last {gq['preliminary_days']} days preliminary.")
     st.markdown("### Reading guide")
     st.markdown("Tabs follow the argument: **question → adoption → fleet → grid → scenarios → "
-                "limits and recommendations.**\n\nGrey dotted lines mark events that explain the data.")
+                "limits and recommendations.**")
 
 
 # ---------------------------------------------------------------- header
@@ -119,67 +120,89 @@ def uplift_at(year: int, growth: float, profile_name: str, a: M.Assumptions):
     return stock, path.iloc[-1]["share_pct"], res
 
 
+def uplift_by_year(a: M.Assumptions, profile_name: str, ref: np.ndarray) -> dict[str, pd.Series]:
+    """% rise in the daily peak from EV charging, each year 2026-2040, for every growth scenario."""
+    base = M.plugin_equivalent_stock(raiavl, fleet, est, a)
+    out = {}
+    for gname, g in M.GROWTH_SCENARIOS.items():
+        p = M.project_stock(base, g, 2040, a, fleet_total[2025])
+        p = p[p["anio"] >= 2026]
+        out[gname] = pd.Series([M.run_scenario(float(r["stock"]), a, M.PROFILES[profile_name], ref,
+                                               int(r["anio"]) - base["anchor_year"]).peak_uplift_pct
+                                for _, r in p.iterrows()], index=p["anio"].astype(int).to_list())
+    return out
+
+
+def uplift_chart(paths: dict[str, pd.Series], threshold: float, height: int, highlight: str | None = None) -> go.Figure:
+    """Peak rise by year, one line per growth scenario, with the 'material' threshold."""
+    fig = go.Figure()
+    for (gname, ser), col in zip(paths.items(), [C.BLUE_RAMP[250], C.BLUE_RAMP[450], C.BLUE_RAMP[650]]):
+        w = 3.5 if gname == highlight else 2.5 if highlight is None else 1.5
+        viz.line(fig, ser.index, ser.values, gname, col, width=w, fmt=".1f", unit="%")
+        viz.end_label(fig, ser.index[-1], ser.values[-1], gname.split(" (")[0])
+    fig.add_hline(y=threshold, line=dict(color=C.COLORS["ink2"], width=1, dash="dot"),
+                  annotation_text=f"'Material' = {threshold:g}%", annotation_position="top left",
+                  annotation_font=dict(size=11, color=C.COLORS["ink2"]))
+    viz.style(fig, height=height, ytitle="Rise in daily peak from EV charging, %")
+    fig.update_xaxes(dtick=2)
+    return fig
+
+
+UNMANAGED = list(M.PROFILES)[0]     # worst case in every growth scenario; fixed on tabs 1 and 5
+BASE_G = list(M.GROWTH_SCENARIOS)[1]
+
+
 # =============================================================== TAB 1
 with tabs[0]:
-    st.markdown("## The question")
-    st.markdown("**Will rising electric-vehicle sales put Nuevo León's electricity grid under stress, "
-                "especially in Monterrey?**")
+    st.markdown("## Will rising EV sales strain Nuevo León's grid?")
 
-    c1, c2 = st.columns([1.15, 1])
-    with c1:
-        st.markdown("**My role.** Advisor to the Government of Nuevo León.")
-        st.markdown("**Who I serve.** The state's energy and mobility decision-makers, who coordinate with CFE "
-                    "(distribution) and CENACE (system operator).")
-        st.markdown("**The decision.** Do we spend political and budget capital *now* on grid upgrades and "
-                    "charging policy, or can it wait, and if it cannot wait, *where* should it go?")
-        st.markdown("**Why these three sources.** RAIAVL says how fast EVs are being *sold* (flow, by state, monthly). "
-                    "The registered-vehicle statistics (VMRC) say how many are actually *on the road* (stock). "
-                    "CENACE says how much load the Northeast grid *carries* hour by hour. Sales alone cannot answer a "
-                    "grid question; it takes all three.")
-    with c2:
-        st.markdown("**Questions guiding the exploration**")
-        st.markdown("1. How fast is EV adoption in Nuevo León, and is it faster than elsewhere?\n"
-                    "2. How many EVs are really on the road, given the registry misses brands?\n"
-                    "3. When, and how hard, does the Northeast grid peak today?\n"
-                    "4. At what fleet size, and with what charging behavior, does EV charging become material?")
-
-    st.markdown("### The short answer (default assumptions, see tab 5 to change them)")
-    stock26 = BASE["stock_2025"] + BASE["adds_2026"]
-    s30, sh30, r30 = uplift_at(2030, 0.25, list(M.PROFILES)[0], DEFAULT_A)
-    s35, sh35, r35 = uplift_at(2035, 0.25, list(M.PROFILES)[0], DEFAULT_A)
-    _, _, r35m = uplift_at(2035, 0.25, list(M.PROFILES)[2], DEFAULT_A)
+    s35, sh35, r35 = uplift_at(2035, 0.25, UNMANAGED, DEFAULT_A)
     tip = tipping_table(DEFAULT_A)
-    base_unmanaged_year = tip.iloc[0]["Base (+25% / yr)"]
-    base_managed_year = tip.iloc[2]["Base (+25% / yr)"]
+    base_year = tip.loc[UNMANAGED, BASE_G]
     organic_mw_10y = REF_DAY.max() * DEFAULT_A.nl_share * ((1 + DEFAULT_A.baseline_growth) ** 10 - 1)
 
-    st.markdown(
-        f"<div class='answer'><b>Not for the system as a whole, not soon. The risk is when and where people charge.</b><br>"
-        f"With base assumptions, EV charging lifts Nuevo León's daily peak by about <b>{r30.peak_uplift_pct:.1f}% in 2030</b> "
-        f"and <b>{r35.peak_uplift_pct:.1f}% in 2035</b> if charging is unmanaged "
-        f"({fmt(s35)} plug-in vehicle equivalents, {sh35:.0f}% of the fleet by 2035). "
-        f"A 5% rise arrives around <b>{base_unmanaged_year}</b> unmanaged versus <b>{base_managed_year}</b> with staggered overnight charging. "
-        f"For scale, ordinary demand growth adds about {fmt(organic_mw_10y)} MW to Nuevo León's peak over the same ten years, "
-        f"more than EVs do in 2035 ({fmt(r35.ev_max_mw)} MW at their own peak hour).</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='answer'><b>Not system-wide, and not soon.</b> Under base growth EV charging adds "
+                f"<b>{r35.peak_uplift_pct:.1f}%</b> to the 2035 peak; a 5% rise arrives around <b>{base_year}</b>.</div>",
+                unsafe_allow_html=True)
 
     k = st.columns(4)
-    k[0].metric("Registered electric vehicles, Nuevo León (end 2025)", fmt(obs_bev[2025]),
+    k[0].metric("Registered EVs, Nuevo León (end 2025)", fmt(obs_bev[2025]),
                 f"{obs_bev[2025] / obs_bev[2024] - 1:+.0%} vs 2024")
-    k[1].metric("Share of all registered vehicles", f"{100 * obs_bev[2025] / fleet_total[2025]:.2f}%")
-    k[2].metric("Northeast grid peak hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
-    k[3].metric("Organic demand growth, 2022–2025", f"{gstats['cagr_mean']:.1%} / yr")
+    k[1].metric("Northeast grid peak hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
+    k[2].metric("EV rise in the 2035 peak (base)", f"{r35.peak_uplift_pct:.1f}%")
+    k[3].metric("Year the peak rises ≥ 5% (base)", str(base_year))
 
-    st.markdown("**When does EV charging raise the daily peak by 5% or more?** (rows: how people charge; columns: how fast sales grow)")
-    st.dataframe(tip, width="stretch")
-    st.caption("Year-by-year model in tab 5. Every number above depends on stated assumptions, "
-               "the least certain being the Nuevo León share of the regional grid (placeholder 50%).")
+    c1, c2 = st.columns([1.6, 1])
+    with c1:
+        st.markdown("#### EV effect on the peak, by growth path")
+        st.plotly_chart(uplift_chart(uplift_by_year(DEFAULT_A, UNMANAGED, REF_DAY), DEFAULT_A.threshold_pct, 320),
+                        width="stretch")
+    with c2:
+        st.markdown("#### Added to the peak by 2035, MW")
+        figc = go.Figure(go.Bar(
+            x=["Ordinary demand growth", "EV charging (base)"], y=[organic_mw_10y, r35.ev_max_mw],
+            marker_color=[C.COLORS["grid"], C.COLORS["BEV"]], marker_cornerradius=4,
+            text=[f"{fmt(organic_mw_10y)} MW", f"{fmt(r35.ev_max_mw)} MW"], textposition="outside",
+            hovertemplate="%{y:,.0f} MW<extra></extra>"))
+        viz.style(figc, height=320, legend=False, hover="closest")
+        figc.update_yaxes(showticklabels=False, range=[0, organic_mw_10y * 1.2])
+        st.plotly_chart(figc, width="stretch")
+    st.caption("Unmanaged charging (worst case). Scenarios, not forecasts: see tab 5 for every assumption.")
 
+    with st.expander("About this dashboard: role, decision and data"):
+        st.markdown(
+            "- **Role:** advisor to the Government of Nuevo León, serving its energy and mobility decision-makers (with CFE and CENACE).\n"
+            "- **Decision:** spend on grid upgrades and charging policy now, or wait, and if not, *where*?\n"
+            "- **Data:** RAIAVL = EV *sales* (flow); VMRC = EVs *on the road* (stock); CENACE = hourly *grid load*. "
+            "A grid question needs all three.\n"
+            "- **Guiding questions:** how fast is adoption (tab 2), how many EVs are really on the road (tab 3), "
+            "when does the grid peak (tab 4), and when does charging become material (tab 5)?")
     coverage("What to keep in mind from the start", [
         "The grid series is the CENACE **Northeast (NES) balance area**, not Monterrey alone. Local overloads on neighborhood "
         "feeders and transformers are invisible in regional data and could matter long before the system does.",
         "The vehicle registry misses brands that do not report (BYD, and per press reports Tesla): it sees only about "
         f"{est.registry_share_2025:.0%} of the battery-electric fleet that INEGI's registration data counts. Tab 3 shows how this is handled.",
-        "Everything after 2026 is a scenario, not a forecast."])
+        "Everything after 2026 is a scenario, not a forecast. The Nuevo León share of the regional grid is a placeholder (50%)."])
 
 
 # =============================================================== TAB 2
@@ -190,8 +213,6 @@ with tabs[1]:
     states_all = sorted(s for s in raiavl["estado"].unique() if s != "No especificado")
     rank = (raiavl[~raiavl["es_no_especificado"] & (raiavl["estado"] != NL)]
             .assign(pi=lambda d: d["bev"] + d["phev"]).groupby("estado")["pi"].sum().sort_values(ascending=False))
-    fixed_color = {s: viz.STATE_COLORS[i] for i, s in enumerate(rank.index[:4])}   # top-4 rivals keep their colour
-    other_cycle = [viz.STATE_COLORS[4], C.COLORS["muted"], "#a46f00"]
 
     f1, f2, f3 = st.columns([1.4, 1.2, 1.4])
     sel_states = f1.multiselect("States (up to 5)", states_all, default=[NL, "Ciudad de México", "Jalisco"],
@@ -229,14 +250,14 @@ with tabs[1]:
         shown = []
         if len(sel_states) > 1:
             for i, s in enumerate(sel_states):
-                col = viz.NL_COLOR if s == NL else fixed_color.get(s, other_cycle[i % 3])
+                col = NL_BLUE if s == NL else C.COLORS["muted"]   # highlight Nuevo León, the rest is context
                 y = transform(by_state[s])[mask]
-                viz.line(fig, idx[mask], y, s, col, width=3 if s == NL else 2,
+                viz.line(fig, idx[mask], y, s, col, width=3 if s == NL else 1.5,
                          fmt=".1f" if "%" in ytitle else ",.0f", unit="%" if "%" in ytitle else "")
                 shown.append(pd.Series(y.values, index=idx[mask], name=s))
-                if len(sel_states) <= 4 and y.notna().any():
+                if y.notna().any():
                     viz.end_label(fig, y.dropna().index[-1], y.dropna().iloc[-1], s)
-            caption = "Colored by state; selected technologies are added together."
+            caption = "Nuevo León in blue, other selected states in grey; selected technologies are added together."
         else:
             s = sel_states[0]
             for t in sel_techs:
@@ -249,9 +270,6 @@ with tabs[1]:
                     viz.end_label(fig, y.dropna().index[-1], y.dropna().iloc[-1], t.upper())
             caption = f"Colored by technology for {s}."
         viz.style(fig, height=420, ytitle=ytitle)
-        viz.add_band(fig, "chip_start", "chip_end", win_lo, win_hi, "Chip shortage", level=0)
-        viz.add_event(fig, "covid", win_lo, win_hi, level=1)
-        viz.add_event(fig, "tariff", win_lo, win_hi, level=0)
         st.plotly_chart(fig, width="stretch")
         st.caption(caption + (" Growth rates are hidden where the earlier 12-month total is below 50 vehicles." if "%" in ytitle else ""))
         table_view(pd.concat(shown, axis=1).round(1))
@@ -263,11 +281,9 @@ with tabs[1]:
         nat_s = nat.rolling(12).sum()
         share = (100 * nl_s / nat_s)[mask]
         fig2 = go.Figure()
-        viz.line(fig2, idx[mask], share, "Nuevo León share of national sales", viz.NL_COLOR, width=2.5, fmt=".1f", unit="%",
+        viz.line(fig2, idx[mask], share, "Nuevo León share of national sales", NL_BLUE, width=2.5, fmt=".1f", unit="%",
                  showlegend=False)
         viz.style(fig2, height=300, ytitle="% of national sales (12-month rolling)", legend=False)
-        viz.add_band(fig2, "chip_start", "chip_end", win_lo, win_hi, "Chip shortage")
-        viz.add_event(fig2, "tariff", win_lo, win_hi, level=1)
         st.plotly_chart(fig2, width="stretch")
         st.caption(f"Selected technologies: {', '.join(TECH_LABEL[t] for t in sel_techs)}. "
                    "National total includes the 'No especificado' state row.")
@@ -290,8 +306,7 @@ with tabs[1]:
         "November 2026) can move totals and cannot be isolated here.",
         f"Latest month is **{last_month:%B %Y}**; November and December 2026 do not exist yet. Sales figures are revised figures.",
         f"{rq['state_months_blank']} state-month cells were blank (state did not report) and are counted as zero. "
-        f"'No especificado' ({fmt(rq['no_especificado_units'])} units) is excluded from state views but included in national totals.",
-        "The January 2026 tariff change and the chip shortage are marked as context; the data alone cannot prove they caused any move."])
+        f"'No especificado' ({fmt(rq['no_especificado_units'])} units) is excluded from state views but included in national totals."])
 
 
 # =============================================================== TAB 3
@@ -346,12 +361,12 @@ with tabs[2]:
     with b:
         st.markdown("#### Total registered vehicles, and the 2023 break")
         yrs = fleet_total.index
-        fig4 = go.Figure(go.Bar(x=yrs, y=fleet_total.values, marker_color=C.COLORS["muted"], marker_cornerradius=4,
-                                name="Registered vehicles", hovertemplate="%{y:,.0f}<extra>Registered vehicles</extra>"))
+        fig4 = go.Figure(go.Scatter(x=yrs, y=fleet_total.values, mode="lines+markers", name="Registered vehicles",
+                                    line=dict(color=C.COLORS["grid"], width=2.5), marker=dict(size=6),
+                                    hovertemplate="%{y:,.0f}<extra>Registered vehicles</extra>"))
         viz.style(fig4, height=330, ytitle="Registered vehicles, Nuevo León", legend=False)
-        fig4.update_xaxes(dtick=1)
-        fig4.add_annotation(x=2023, y=fleet_total[2023], text="−17% in one year:<br>series break, not real loss", showarrow=True,
-                            arrowhead=0, ax=0, ay=-48, font=dict(size=11, color=C.COLORS["ink2"]))
+        fig4.update_xaxes(dtick=2, tickangle=0)
+        fig4.update_yaxes(rangemode="tozero")
         st.plotly_chart(fig4, width="stretch")
         st.caption(f"Electric share of all registered vehicles: {100 * obs_bev[2024] / fleet_total[2024]:.2f}% (2024) → "
                    f"{100 * obs_bev[2025] / fleet_total[2025]:.2f}% (2025).")
@@ -386,8 +401,6 @@ with tabs[3]:
     viz.line(fig, roll.index, roll.values, "30-day average of daily peak", C.COLORS["grid"], width=2.5, unit=" MW")
     viz.style(fig, height=380, ytitle="Demand, MW")
     lo, hi = daily.index.min(), daily.index.max()
-    viz.add_event(fig, "covid", lo, hi, level=0)
-    viz.add_event(fig, "uri", lo, hi, level=1, label="Feb 2021 storm:<br>load shedding")
     if gq.get("preliminary_from") and pd.Timestamp(gq["preliminary_from"]) < hi:
         pf = pd.Timestamp(gq["preliminary_from"])
         fig.add_shape(type="rect", x0=pf, x1=hi, y0=0, y1=1, yref="paper", line=dict(width=0),
@@ -451,7 +464,6 @@ with tabs[3]:
         viz.line(figb, m.index, m["gen"], "Generation in the area", C.COLORS["muted"], width=2, unit=" MW")
         viz.line(figb, m.index, m["demand"], "'Demand by balance' as published", C.COLORS["grid"], width=2.5, unit=" MW")
         viz.style(figb, height=330, ytitle="Monthly average, MW")
-        viz.add_event(figb, "cenace_def", m.index.min(), m.index.max(), label="Jan 2020: CENACE starts<br>subtracting flows to other regions")
         st.plotly_chart(figb, width="stretch")
         st.caption(f"Before 2020 the published 'demand by balance' equals generation (about {fmt(gq['mean_demand_mw_by_year']['2019'])} MW in 2019). "
                    f"From January 2020 the net flows out of the area, about {fmt(gq['mean_generation_mw_by_year']['2020'] - gq['mean_demand_mw_by_year']['2020'])} MW, "
@@ -471,43 +483,40 @@ with tabs[3]:
 # =============================================================== TAB 5
 with tabs[4]:
     st.markdown("## What happens when EVs meet the evening peak?")
-    st.markdown("Pick a year, a growth path and a charging behavior. The model adds EV charging load to the Northeast grid's "
-                "shape on a reference day, scaled to Nuevo León. **Nothing on this tab is measured except the grid shape and the 2024–25 fleet.**")
+    st.markdown("Pick a growth scenario. The model adds EV charging to the Northeast grid's load on its 2025 peak day, scaled to "
+                "Nuevo León. **Only the grid shape and the 2024–25 fleet are measured; everything else is an assumption, shown below.**")
 
-    s1, s2, s3, s4 = st.columns(4)
-    horizon = s1.slider("Year", 2026, 2040, 2035, key="hz")
-    growth_name = s2.radio("Growth of new plug-in sales after 2026", list(M.GROWTH_SCENARIOS), index=1, key="gr")
-    profile_name = s3.radio("How people charge", list(M.PROFILES), key="pf")
-    day_kind = s4.radio("Reference day (2025 grid)", M.REFERENCE_DAYS, key="dk")
+    HORIZON = 2035                     # fixed: the headline year
+    day_kind = M.REFERENCE_DAYS[0]     # fixed: annual peak day (worst day of the year)
+    growth_name = st.radio("Scenario: growth of new plug-in sales after 2026", list(M.GROWTH_SCENARIOS), index=1,
+                           horizontal=True, key="gr")
 
-    with st.expander("Assumptions: change any of them (these are not data)"):
-        e1, e2, e3 = st.columns(3)
-        kwh = e1.slider("Grid energy per vehicle per day (kWh)", 3.0, 15.0, DEFAULT_A.kwh_per_day, 0.5,
-                        help="About 15,000 km a year at 0.18 kWh/km, plus charging losses.")
-        phev_w = e1.slider("Plug-in hybrid grid energy vs a battery-electric", 0.0, 1.0, DEFAULT_A.phev_weight, 0.05)
-        phev_m = e2.slider("Plug-in hybrid coverage multiplier", 1.0, 6.0, DEFAULT_A.phev_multiplier, 0.1,
-                           help="1 = RAIAVL as reported. Higher values assume non-reporting brands sell more plug-in hybrids.")
-        bg = e2.slider("Organic growth of other demand (% per year)", 0.0, 6.0, round(100 * DEFAULT_A.baseline_growth, 1), 0.1,
-                       help="Default = growth of the Northeast annual peak, 2022–2025 (CENACE).")
-        share = e3.slider("Nuevo León share of the Northeast's demand (%)", 30, 80, int(100 * DEFAULT_A.nl_share), 5,
-                          help="PLACEHOLDER. No source found. Replace with CFE's figure if you have it.")
-        thr = e3.slider("'Material': EV charging raises the daily peak by (%)", 1.0, 15.0, DEFAULT_A.threshold_pct, 0.5)
-
-    A = M.Assumptions(kwh_per_day=kwh, phev_weight=phev_w, phev_multiplier=phev_m, baseline_growth=bg / 100,
-                      nl_share=share / 100, threshold_pct=thr)
+    A = DEFAULT_A
     base = M.plugin_equivalent_stock(raiavl, fleet, est, A)
     gr = M.GROWTH_SCENARIOS[growth_name]
-    prof = M.PROFILES[profile_name]
-    ref, ref_label = M.reference_day(grid, 2025, day_kind)
+    prof = M.PROFILES[UNMANAGED]
+    ref, ref_label = REF_DAY, REF_LABEL
     path = M.project_stock(base, gr, 2040, A, fleet_total[2025])
-    row = path[path["anio"] == horizon].iloc[0]
-    res = M.run_scenario(float(row["stock"]), A, prof, ref, horizon - base["anchor_year"])
+    row = path[path["anio"] == HORIZON].iloc[0]
+    res = M.run_scenario(float(row["stock"]), A, prof, ref, HORIZON - base["anchor_year"])
     ty = M.tipping_year(A, prof, ref, base, gr, fleet_total[2025])
 
+    with st.container(border=True):
+        st.markdown(f"**Assumptions in this scenario** ({growth_name.split(' (')[0]})")
+        a1, a2, a3 = st.columns(3)
+        a1.markdown(f"- New plug-in sales grow **{gr:.0%} a year** after 2026\n"
+                    f"- **{A.kwh_per_day:g} kWh** of grid energy per vehicle per day")
+        a2.markdown(f"- A plug-in hybrid draws **{A.phev_weight:.0%}** of a battery-electric's energy\n"
+                    f"- Charging: **unmanaged**, plug in after work (worst case)")
+        a3.markdown(f"- 'Material' = peak rises **≥ {A.threshold_pct:g}%**\n"
+                    f"- Nuevo León = **{A.nl_share:.0%}** of Northeast demand (placeholder)")
+        st.caption(f"Fixed for every scenario: year {HORIZON}; reference day = 2025 annual peak day ({ref_label}); "
+                   f"other demand grows {A.baseline_growth:.1%} a year (Northeast peak, 2022–2025).")
+
     m1 = st.columns(4)
-    m1[0].metric(f"Plug-in fleet in {horizon} (BEV-equivalents)", fmt(row["stock"]), f"{row['share_pct']:.1f}% of all vehicles", delta_color="off")
+    m1[0].metric(f"Plug-in fleet in {HORIZON} (BEV-equivalents)", fmt(row["stock"]), f"{row['share_pct']:.1f}% of all vehicles", delta_color="off")
     m1[1].metric("EV charging raises the daily peak by", f"{res.peak_uplift_pct:.1f}%")
-    m1[2].metric(f"Year the peak rises ≥ {thr:g}%", str(ty) if ty else "after 2050")
+    m1[2].metric(f"Year the peak rises ≥ {A.threshold_pct:g}%", str(ty) if ty else "after 2050")
     m1[3].metric("EV load at its busiest hour", f"{fmt(res.ev_max_mw)} MW", f"at {res.ev_max_hour:02d}:00", delta_color="off")
     m2 = st.columns(4)
     m2[0].metric("EV load at the system's peak hour", f"{fmt(res.ev_at_peak_mw)} MW", f"{res.ev_pct_at_peak:.1f}% of NL demand then", delta_color="off")
@@ -515,7 +524,7 @@ with tabs[4]:
     m2[2].metric("EV energy per day", f"{fmt(res.daily_ev_mwh)} MWh")
     m2[3].metric("Baseline peak hour", f"{res.peak_hour:02d}:00")
 
-    st.markdown(f"#### Nuevo León load on a peak-demand day, {horizon}")
+    st.markdown(f"#### Nuevo León load on a peak-demand day, {HORIZON}")
     figa = go.Figure()
     figa.add_trace(go.Scatter(x=HOURS, y=res.baseline_nl, name="Other demand (Northeast shape × NL share)", mode="lines",
                               stackgroup="one", line=dict(width=0.5, color=C.COLORS["grid"]), fillcolor="rgba(82,81,78,0.30)",
@@ -530,51 +539,30 @@ with tabs[4]:
     figa.update_xaxes(dtick=3)
     figa.update_yaxes(rangemode="tozero")
     st.plotly_chart(figa, width="stretch")
-    st.caption(f"Reference day: {day_kind.lower()} ({ref_label}). Charging shape: {profile_name.lower()}. "
-               f"New peak {fmt(res.new_peak_mw)} MW at {res.new_peak_hour:02d}:00 vs {fmt(res.baseline_nl.max())} MW without EVs.")
+    st.caption(f"New peak {fmt(res.new_peak_mw)} MW at {res.new_peak_hour:02d}:00 vs {fmt(res.baseline_nl.max())} MW without EVs.")
 
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("#### EV effect on the peak, by year and growth path")
-        figy = go.Figure()
-        shades = [C.BLUE_RAMP[250], C.BLUE_RAMP[450], C.BLUE_RAMP[650]]
-        rows = {}
-        for (gname, g), col in zip(M.GROWTH_SCENARIOS.items(), shades):
-            p = M.project_stock(base, g, 2040, A, fleet_total[2025])
-            ys, vs = [], []
-            for _, r_ in p.iterrows():
-                y = int(r_["anio"])
-                if y < 2026:
-                    continue
-                rr = M.run_scenario(float(r_["stock"]), A, prof, ref, y - base["anchor_year"])
-                ys.append(y)
-                vs.append(rr.peak_uplift_pct)
-            viz.line(figy, ys, vs, gname, col, width=2.5, fmt=".1f", unit="%")
-            viz.end_label(figy, ys[-1], vs[-1], gname.split(" (")[0])
-            rows[gname] = pd.Series(vs, index=ys)
-        figy.add_hline(y=thr, line=dict(color=C.COLORS["ink2"], width=1, dash="dot"),
-                       annotation_text=f"'Material' = {thr:g}%", annotation_position="top left",
-                       annotation_font=dict(size=11, color=C.COLORS["ink2"]))
-        viz.style(figy, height=360, ytitle="Rise in daily peak from EV charging, %")
-        figy.update_xaxes(dtick=2)
-        st.plotly_chart(figy, width="stretch")
-        table_view(pd.DataFrame(rows).round(2), "Show the data (% rise in peak)")
+        paths = uplift_by_year(A, UNMANAGED, ref)
+        st.plotly_chart(uplift_chart(paths, A.threshold_pct, 360, highlight=growth_name), width="stretch")
+        table_view(pd.DataFrame(paths).round(2), "Show the data (% rise in peak)")
     with c2:
-        st.markdown(f"#### Sensitivity in {horizon}: fleet size × charging behavior")
+        st.markdown(f"#### Does charging behavior matter? Fleet size × charging, {HORIZON}")
         sizes = [50_000, 100_000, 250_000, 500_000, 750_000, 1_000_000, 1_500_000]
-        z = [[M.run_scenario(s, A, p_, ref, horizon - base["anchor_year"]).peak_uplift_pct for s in sizes] for p_ in M.PROFILES.values()]
+        z = [[M.run_scenario(s, A, p_, ref, HORIZON - base["anchor_year"]).peak_uplift_pct for s in sizes] for p_ in M.PROFILES.values()]
         ramp = [[i / 6, c] for i, c in enumerate([C.BLUE_RAMP[k] for k in (100, 200, 300, 450, 550, 650, 700)])]
         figs = go.Figure(go.Heatmap(z=z, x=[f"{s // 1000}k" if s < 1_000_000 else f"{s / 1e6:g}M" for s in sizes],
-                                    y=[k.split(":")[0] for k in M.PROFILES], colorscale=ramp, zmin=0, zmax=max(15, thr * 2),
+                                    y=[k.split(":")[0] for k in M.PROFILES], colorscale=ramp, zmin=0, zmax=15,
                                     xgap=2, ygap=2, texttemplate="%{z:.1f}%", showscale=False,
                                     hovertemplate="%{y}, %{x} vehicles<br>peak +%{z:.1f}%<extra></extra>"))
         viz.style(figs, height=360, legend=False, hover="closest", xtitle="Plug-in fleet (BEV-equivalents)")
         figs.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)")
         st.plotly_chart(figs, width="stretch")
-        st.caption("Cell value = how much EV charging lifts the daily peak. For reference: current fleet ≈ "
-                   f"{fmt(BASE['stock_2025'])} (end 2025).")
+        st.caption("Cell value = how much EV charging lifts the daily peak. Fleet size moves it far more than charging behavior. "
+                   f"Current fleet ≈ {fmt(BASE['stock_2025'])} (end 2025).")
 
-    st.markdown("**Year EV charging lifts the peak by the threshold, for every combination** (current assumptions)")
+    st.markdown("**Year EV charging lifts the peak by 5%, for every growth path and charging behavior**")
     st.dataframe(tipping_table(A), width="stretch")
 
     vemo_mw = 65 * 0.120
@@ -586,7 +574,7 @@ with tabs[4]:
         "**Data:** the shape and size of Northeast demand (CENACE), registered electric vehicles in 2024–25 (INEGI), annual sales since 2016 (RAIAVL).",
         "**Estimated:** electric fleet before 2024 and the 2026 nowcast (from RAIAVL sales and a ratio calibrated on one year).",
         "**Assumed:** growth after 2026, kWh per vehicle, how and when people charge, the plug-in hybrid weight, the share of the Northeast that is "
-        "Nuevo León (**placeholder 50%**), and what counts as 'material'. The sliders above expose all of them.",
+        "Nuevo León (**placeholder 50%**), and what counts as 'material'. All are listed in the assumptions box above.",
         "Regional totals hide local stress: a street with many EVs can overload a transformer while the system looks fine."])
 
 
@@ -609,14 +597,16 @@ with tabs[5]:
     st.markdown(
         "1. **Do not fund generation or transmission *for EVs* now.** Ordinary demand growth is the bigger driver for the next decade, and EV "
         "charging stays below a 5% rise in the peak until the mid-2030s under base growth.\n"
-        "2. **Make charging behavior the policy lever.** In the model, when people charge matters as much as how many EVs there are. "
-        "Pilot time-of-use tariffs with CFE and require managed-charging-ready equipment in new public chargers and new buildings.\n"
+        "2. **Watch the growth rate first, charging behavior second.** In the model, how fast plug-in sales grow moves the 5% date by "
+        "about ten years; when people charge moves it by one or two. Time-of-use tariffs are still worth piloting with CFE, but as a "
+        "refinement, not the main lever.\n"
         "3. **Ask CFE for feeder- and transformer-level load in the Monterrey metro** and overlay it with municipal EV counts from the state's "
         "own vehicle-registration records. That is where the real risk sits and where this dashboard is blind.\n"
         "4. **Fix the measurement gap.** The state's registration data counts every EV regardless of brand. Publish it by municipality and "
         "energy source, and ask INEGI to resolve the plug-in hybrid coding.\n"
-        "5. **Set triggers, not dates.** Re-run this dashboard each quarter and revisit if EV share of vehicles passes 5%, if new plug-in "
-        "sales keep growing above 40% a year, or if the modeled peak rise approaches your threshold.")
+        "5. **Set triggers, not dates.** Sales are already growing at the High-scenario pace (about 40% a year). If that pace holds "
+        "through 2027, the 5% rise moves to about 2034, so start grid planning with CFE by about 2030. Re-run this dashboard each "
+        "year with new INEGI and CENACE data.")
 
     st.markdown("## Sources")
     st.markdown(
