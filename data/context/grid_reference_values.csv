@@ -1,0 +1,10 @@
+metric,scope,value,unit,year,note,source,url
+operating_reserve_margin_actual,Mexico SIN,14.76,%,2026,At summer peak,Forbes México (CENACE),https://forbes.com.mx/?p=1421549
+reserve_margin_alert_threshold,Mexico SIN,6,%,,Alert state between 3% and 6%,El Financiero,https://www.elfinanciero.com.mx/monterrey/2024/06/06/roberto-mercado-temporada-de-calor-y-de-apagones/
+reserve_margin_emergency_threshold,Mexico SIN,3,%,,Emergency below 3%; CENACE may shed load,El Financiero,https://www.elfinanciero.com.mx/monterrey/2024/06/06/roberto-mercado-temporada-de-calor-y-de-apagones/
+peak_demand,Mexico SIN,55600,MW,2026,Projected summer peak,Forbes México (CENACE),https://forbes.com.mx/?p=1421549
+installed_capacity,Mexico SIN,62712,MW,2026,Includes external producers,Forbes México (CENACE),https://forbes.com.mx/?p=1421549
+peak_demand_growth_forecast,Mexico SEN,2.8,%/yr,2025-2039,PLADESE planning scenario,IMCO (PLADESE),https://imco.org.mx/el-sector-electrico-ante-el-nuevo-panorama-regulatorio-2025/
+consumption_growth_forecast,GCR Noreste,2.8,%/yr,2025-2039,PLADESE planning scenario,JETRO (PLADESE),https://www.jetro.go.jp/ext_images/mexico/electrico/electricoesp1.pdf
+saidi_limit,CFE distribution,50,min/user,,Regulatory limit,CFE PAM RGD,https://www.cfe.gob.mx/distribucion/cumplimiento/Documents/PAM%20RGD%202024-2038%20VF.pdf
+homes_per_distribution_transformer,Residential (typical),4-8,homes,,Typical range,US patent 9403441,https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/9403441

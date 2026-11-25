@@ -16,6 +16,7 @@ import streamlit as st
 import viz
 from pipeline import config as C
 from pipeline import model as M
+from pipeline.load_context import load_context, ref_value
 
 st.set_page_config(page_title="EVs and the Nuevo León grid", page_icon="⚡", layout="wide")
 
@@ -43,10 +44,10 @@ def load_all():
     fleet = pd.read_csv(C.FLEET_CLEAN)
     grid = pd.read_csv(C.GRID_HOURLY, parse_dates=["ts", "fecha"])
     quality = json.loads(C.QUALITY_JSON.read_text())
-    return raiavl, fleet, grid, quality
+    return raiavl, fleet, grid, quality, load_context()
 
 
-raiavl, fleet, grid, quality = load_all()
+raiavl, fleet, grid, quality, ctx = load_all()
 gq, rq, fq = quality["grid"], quality["raiavl"], quality["fleet"]
 last_month = raiavl["fecha"].max()
 gcomp = M.comparable(grid)
@@ -85,9 +86,16 @@ with st.sidebar:
         f"{fq['energy_source_detail_years'][0]}–{fq['energy_source_detail_years'][-1]}.\n"
         f"- **Grid (CENACE, area NES)**: {gq['first_day']} → {gq['last_day']}; comparable demand from "
         f"{gq['comparable_from']}; last {gq['preliminary_days']} days preliminary.")
+    st.markdown("- **Context tables**: CFE reliability reports, CENACE, NL Government and press, 2017–2026 "
+                "(`data/context/`, each row with its source).")
     st.markdown("### Reading guide")
-    st.markdown("Tabs follow the argument: **question → adoption → fleet → grid → scenarios → "
-                "limits and recommendations.**")
+    st.markdown("**Grid under pressure → EVs rising → will EVs hurt it? → what can you do?**")
+    with st.expander("About this dashboard"):
+        st.markdown(
+            "- **Role:** advisor to the Government of Nuevo León (with CFE and CENACE).\n"
+            "- **Decision:** spend on grid upgrades and charging policy now, or wait, and if not, *where*?\n"
+            "- **Data:** RAIAVL = EV *sales*; VMRC = EVs *on the road*; CENACE = hourly *grid load*; "
+            "CFE reports and press = reliability and 2026 events.")
 
 
 # ---------------------------------------------------------------- header
@@ -95,8 +103,8 @@ st.title("Will electric cars strain Monterrey's grid?")
 st.markdown("<span class='small'>Advisory dashboard for the Government of Nuevo León · INEGI RAIAVL, INEGI VMRC "
             "and CENACE data</span>", unsafe_allow_html=True)
 
-tabs = st.tabs(["1 · The question", "2 · EV adoption", "3 · Vehicles on the road", "4 · The grid",
-                "5 · Collision: scenarios", "6 · Limits & recommendations"])
+tabs = st.tabs(["1 · Grid under pressure", "2 · EV adoption", "3 · Vehicles on the road",
+               "4 · Will EVs hurt it?", "5 · What can you do?"])
 
 
 # =============================================================== helpers for headline numbers
@@ -154,55 +162,153 @@ BASE_G = list(M.GROWTH_SCENARIOS)[1]
 
 # =============================================================== TAB 1
 with tabs[0]:
-    st.markdown("## Will rising EV sales strain Nuevo León's grid?")
+    rel, ev26 = ctx["reliability"], ctx["events"]
+    st.markdown("## Average reliability improved until 2024; summer 2026 broke the pattern")
+    st.markdown("<span class='small'>Official 2025–26 reliability data is not published yet.</span>", unsafe_allow_html=True)
 
-    s35, sh35, r35 = uplift_at(2035, 0.25, UNMANAGED, DEFAULT_A)
-    tip = tipping_table(DEFAULT_A)
-    base_year = tip.loc[UNMANAGED, BASE_G]
-    organic_mw_10y = REF_DAY.max() * DEFAULT_A.nl_share * ((1 + DEFAULT_A.baseline_growth) ** 10 - 1)
+    firms = ev26.loc[ev26["metric"] == "firms_affected_h1", "value"].iloc[0]
+    inter = ev26.loc[ev26["metric"] == "cfe_interruptions_jan_aug", "value"].iloc[0]
+    k = st.columns([1.1, 1.4, 1.5])
+    k[0].metric("NL firms hit, H1 2026", f"{firms:.1f}%",
+                help="Share of CAINTRA-surveyed firms affected by interruptions or voltage variations, Jan–Jun 2026.")
+    k[1].metric("CFE interruptions, Mexico, Jan–Aug 2026", f"{inter / 1000:,.0f}k",
+                help="National total; CFE gives no breakdown by state.")
+    k[2].caption("Sources: Líder Empresarial (CAINTRA survey, 2026); N+ (CFE data, 2026). The 317k is national: no state breakdown.")
 
-    st.markdown(f"<div class='answer'><b>Not system-wide, and not soon.</b> Under base growth EV charging adds "
-                f"<b>{r35.peak_uplift_pct:.1f}%</b> to the 2035 peak; a 5% rise arrives around <b>{base_year}</b>.</div>",
-                unsafe_allow_html=True)
+    x = pd.to_datetime(rel["year"].astype(str) + "-07-01")       # yearly value plotted mid-year
+    fig = go.Figure()
+    fig.add_shape(type="rect", x0="2025-01-01", x1="2026-12-31", y0=0, y1=1, yref="paper", line=dict(width=0),
+                  fillcolor="rgba(137,135,129,0.15)", layer="below")
+    fig.add_annotation(x="2025-01-01", y=1, yref="paper", text="2025–26 not yet published", showarrow=False,
+                       xanchor="left", yanchor="top", xshift=4, font=dict(size=11, color=C.COLORS["ink2"]))
+    viz.line(fig, x, rel["saidi_min_per_user"], "SAIDI: minutes without power per user per year", C.COLORS["grid"],
+             width=2.5, fmt=".1f", unit=" min")
+    fig.add_hline(y=float(rel["saidi_limit_min"].iloc[0]), line=dict(color="#e34948", width=1, dash="dash"),
+                  annotation_text="CFE limit: 50 min", annotation_position="top left",
+                  annotation_font=dict(size=11, color=C.COLORS["ink2"]))
+    lanes = {"outage": 44, "cause": 38, "survey": 32, "reserve": 26, "investment": 20, "political": 14}
+    ev = ev26.copy()
+    ev["when"] = ev["date"].dt.strftime("%d %b %Y")
+    ev.loc[ev["description"].str.contains("placeholder"), "when"] = ev["date"].dt.strftime("%B %Y")
+    for etype, sub in ev.groupby("event_type", sort=False):
+        fig.add_trace(go.Scatter(
+            x=sub["date"], y=[lanes.get(etype, 8)] * len(sub), mode="markers", name=f"2026 event: {etype}", showlegend=False,
+            marker=dict(size=10, color=C.COLORS["BEV"] if etype == "outage" else C.COLORS["muted"],
+                        line=dict(width=1, color="white")),
+            customdata=sub[["when", "place", "description", "source"]].to_numpy(),
+            hovertemplate="<b>%{customdata[0]}</b> · %{customdata[1]}<br>%{customdata[2]}<br>"
+                          "<i>Source: %{customdata[3]}</i><extra></extra>"))
+    viz.style(fig, height=380, ytitle="Minutes per user per year", hover="closest", legend=False)
+    fig.update_yaxes(range=[0, 55])
+    fig.update_xaxes(range=["2016-10-01", "2026-12-31"], dtick="M12", tickformat="%Y")
+    st.plotly_chart(fig, width="stretch")
+    st.caption("Line: SAIDI, minutes without power per user per year, for CFE's Golfo Norte distribution division (CFE, PAM RGD 2019–2033 to 2025–2039 editions). "
+               "Dots: 2026 events (hover for detail and source); their height only separates event types. Blue = outages.")
+    coverage("About these reliability numbers", [
+        "SAIDI is an **average for the whole Golfo Norte division**, wider than the Monterrey metro. A falling average can hide "
+        "neighborhoods with repeated outages.",
+        "CFE publishes each year's figures in a later planning report (PAM RGD), so 2025 and 2026 are not available yet.",
+        "The 2026 events come from press and government statements, not from a measured series; they show what happened, not how much.",
+        "The July 2026 outage has a month but no exact day; it is plotted on the 15th."])
 
-    k = st.columns(4)
-    k[0].metric("Registered EVs, Nuevo León (end 2025)", fmt(obs_bev[2025]),
-                f"{obs_bev[2025] / obs_bev[2024] - 1:+.0%} vs 2024")
-    k[1].metric("Northeast grid peak hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
-    k[2].metric("EV rise in the 2035 peak (base)", f"{r35.peak_uplift_pct:.1f}%")
-    k[3].metric("Year the peak rises ≥ 5% (base)", str(base_year))
+    st.divider()
+    st.markdown("### When does the Northeast grid peak?")
+    st.markdown("Hourly demand estimate for CENACE's Northeast (NES) balance area, which includes Monterrey. "
+                "EV charging adds load on top of this shape.")
 
-    c1, c2 = st.columns([1.6, 1])
-    with c1:
-        st.markdown("#### EV effect on the peak, by growth path")
-        st.plotly_chart(uplift_chart(uplift_by_year(DEFAULT_A, UNMANAGED, REF_DAY), DEFAULT_A.threshold_pct, 320),
-                        width="stretch")
-    with c2:
-        st.markdown("#### Added to the peak by 2035, MW")
-        figc = go.Figure(go.Bar(
-            x=["Ordinary demand growth", "EV charging (base)"], y=[organic_mw_10y, r35.ev_max_mw],
-            marker_color=[C.COLORS["grid"], C.COLORS["BEV"]], marker_cornerradius=4,
-            text=[f"{fmt(organic_mw_10y)} MW", f"{fmt(r35.ev_max_mw)} MW"], textposition="outside",
-            hovertemplate="%{y:,.0f} MW<extra></extra>"))
-        viz.style(figc, height=320, legend=False, hover="closest")
-        figc.update_yaxes(showticklabels=False, range=[0, organic_mw_10y * 1.2])
-        st.plotly_chart(figc, width="stretch")
-    st.caption("Unmanaged charging (worst case). Scenarios, not forecasts: see tab 5 for every assumption.")
+    g1, g2, g3 = st.columns([1.5, 1.2, 1.1])
+    yr_lo, yr_hi = g1.slider("Years", 2020, int(gcomp["fecha"].dt.year.max()), (2021, int(gcomp["fecha"].dt.year.max())), key="yrs4")
+    season = g2.selectbox("Season (for the two lower charts)", ["All year", "Summer (May–Sep)", "Winter (Dec–Feb)",
+                                                              "Shoulder (Mar–Apr, Oct–Nov)"], key="season4")
+    daytype = g3.radio("Days", ["All days", "Weekdays", "Weekends"], horizontal=True, key="day4")
 
-    with st.expander("About this dashboard: role, decision and data"):
-        st.markdown(
-            "- **Role:** advisor to the Government of Nuevo León, serving its energy and mobility decision-makers (with CFE and CENACE).\n"
-            "- **Decision:** spend on grid upgrades and charging policy now, or wait, and if not, *where*?\n"
-            "- **Data:** RAIAVL = EV *sales* (flow); VMRC = EVs *on the road* (stock); CENACE = hourly *grid load*. "
-            "A grid question needs all three.\n"
-            "- **Guiding questions:** how fast is adoption (tab 2), how many EVs are really on the road (tab 3), "
-            "when does the grid peak (tab 4), and when does charging become material (tab 5)?")
-    coverage("What to keep in mind from the start", [
-        "The grid series is the CENACE **Northeast (NES) balance area**, not Monterrey alone. Local overloads on neighborhood "
-        "feeders and transformers are invisible in regional data and could matter long before the system does.",
-        "The vehicle registry misses brands that do not report (BYD, and per press reports Tesla): it sees only about "
-        f"{est.registry_share_2025:.0%} of the battery-electric fleet that INEGI's registration data counts. Tab 3 shows how this is handled.",
-        "Everything after 2026 is a scenario, not a forecast. The Nuevo León share of the regional grid is a placeholder (50%)."])
+    gw = gcomp[(gcomp["fecha"].dt.year >= yr_lo) & (gcomp["fecha"].dt.year <= yr_hi)]
+    daily = gw.groupby("fecha")["demand_mw"].max()
+    roll = daily.rolling(30, min_periods=15).mean()
+    fig = go.Figure()
+    viz.line(fig, daily.index, daily.values, "Peak hour of each day", C.COLORS["muted"], width=1, opacity=0.8, unit=" MW")
+    viz.line(fig, roll.index, roll.values, "30-day average of daily peak", C.COLORS["grid"], width=2.5, unit=" MW")
+    viz.style(fig, height=380, ytitle="Demand, MW")
+    lo, hi = daily.index.min(), daily.index.max()
+    if gq.get("preliminary_from") and pd.Timestamp(gq["preliminary_from"]) < hi:
+        pf = pd.Timestamp(gq["preliminary_from"])
+        fig.add_shape(type="rect", x0=pf, x1=hi, y0=0, y1=1, yref="paper", line=dict(width=0),
+                      fillcolor="rgba(137,135,129,0.2)", layer="below")
+        fig.add_annotation(x=pf, y=0.04, yref="paper", text="Preliminary", showarrow=False, xanchor="left", xshift=3,
+                           font=dict(size=11, color=C.COLORS["ink2"]))
+    st.plotly_chart(fig, width="stretch")
+    table_view(pd.DataFrame({"daily peak MW": daily.round(0), "30-day avg": roll.round(0)}).tail(400), "Show the data (latest 400 days)")
+
+    season_months = {"All year": range(1, 13), "Summer (May–Sep)": (5, 6, 7, 8, 9), "Winter (Dec–Feb)": (12, 1, 2),
+                     "Shoulder (Mar–Apr, Oct–Nov)": (3, 4, 10, 11)}
+    gd = gw
+    if daytype == "Weekdays":
+        gd = gd[gd["fecha"].dt.weekday < 5]
+    elif daytype == "Weekends":
+        gd = gd[gd["fecha"].dt.weekday >= 5]
+
+    h1, h2 = st.columns(2)
+    with h1:
+        st.markdown("#### Hour of day × month: when demand is highest")
+        pv = gd.assign(m=gd["fecha"].dt.month).pivot_table(index="hour", columns="m", values="demand_mw", aggfunc="mean")
+        pv = pv.reindex(index=range(24), columns=range(1, 13))
+        ramp = [[i / 6, c] for i, c in enumerate([C.BLUE_RAMP[k] for k in (100, 200, 300, 450, 550, 650, 700)])]
+        figh = go.Figure(go.Heatmap(z=pv.values, x=MONTH_ABBR, y=HOURS, colorscale=ramp, xgap=2, ygap=2,
+                                    colorbar=dict(title="MW", thickness=12),
+                                    hovertemplate="%{x} · %{y}<br>%{z:,.0f} MW<extra></extra>"))
+        viz.style(figh, height=480, legend=False, hover="closest")
+        figh.update_yaxes(autorange="reversed", dtick=2, gridcolor="rgba(0,0,0,0)")
+        st.plotly_chart(figh, width="stretch")
+        st.caption("Average demand. Evening hours from May to September are the system's binding period: "
+                   "air-conditioning load, exactly when EVs are plugged in after work.")
+    with h2:
+        st.markdown("#### Average daily shape by season")
+        figp = go.Figure()
+        seasons = [("Summer (May–Sep)", "#e34948"), ("Winter (Dec–Feb)", "#6250d6"), ("Shoulder (Mar–Apr, Oct–Nov)", C.COLORS["muted"])]
+        pk = {}
+        for name, col in seasons:
+            sub = gd[gd["fecha"].dt.month.isin(season_months[name])]
+            if sub.empty:
+                continue
+            prof = sub.groupby("hour")["demand_mw"].mean().reindex(range(24))
+            pk[name] = (int(prof.idxmax()), float(prof.max()))
+            viz.line(figp, HOURS, prof.values, name.split(" (")[0], col, width=3 if name == season else 2, unit=" MW")
+            viz.end_label(figp, HOURS[-1], prof.values[-1], name.split(" (")[0], dx=4)
+        viz.style(figp, height=480, ytitle="Average demand, MW")
+        figp.update_xaxes(dtick=3)
+        st.plotly_chart(figp, width="stretch")
+        if pk:
+            txt = "; ".join(f"{n.split(' (')[0].lower()} peak at {h:02d}:00 ({fmt(v)} MW)" for n, (h, v) in pk.items())
+            st.caption("Average-day peak: " + txt + ".")
+
+    kp = st.columns(4)
+    kp[0].metric("Highest hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
+    kp[1].metric("Average demand, 2025", f"{fmt(gstats['mean'][2025])} MW")
+    kp[2].metric("Peak growth 2022–2025", f"{gstats['cagr_peak']:.1%} / yr")
+    kp[3].metric("Average growth 2022–2025", f"{gstats['cagr_mean']:.1%} / yr")
+
+    with st.expander("Why this series starts in 2020, not 2016"):
+        m = grid.set_index("ts").resample("MS").agg(demand=("demand_mw", "mean"), gen=("gen_mw", "mean"))
+        figb = go.Figure()
+        viz.line(figb, m.index, m["gen"], "Generation in the area", C.COLORS["muted"], width=2, unit=" MW")
+        viz.line(figb, m.index, m["demand"], "'Demand by balance' as published", C.COLORS["grid"], width=2.5, unit=" MW")
+        viz.style(figb, height=330, ytitle="Monthly average, MW")
+        st.plotly_chart(figb, width="stretch")
+        st.caption(f"Before 2020 the published 'demand by balance' equals generation (about {fmt(gq['mean_demand_mw_by_year']['2019'])} MW in 2019). "
+                   f"From January 2020 the net flows out of the area, about {fmt(gq['mean_generation_mw_by_year']['2020'] - gq['mean_demand_mw_by_year']['2020'])} MW, "
+                   "are subtracted and the series drops by almost half although nothing physical changed. Only 2020 onward is comparable demand, "
+                   "so grid analysis covers about 6.9 years, not ten. The sales and fleet analysis cover the full decade.")
+
+    coverage("Coverage and caveats for this tab", [
+        "**NES is a regional balance area, not Monterrey.** It includes load outside Nuevo León, and neighborhood-level stress cannot be seen here.",
+        "'Demand by balance' is an **estimate** (generation plus flows with other areas), not metered consumption.",
+        f"The latest {gq['preliminary_days']} days (from {gq['preliminary_from']}) are preliminary first estimates; CENACE later revises them.",
+        "2020 (COVID) and the February 2021 storm are anomalous years, so growth is computed over 2022–2025.",
+        f"Days with 23 hours before 2023 are daylight-saving spring-forward days, not missing data. "
+        f"{fmt(gq['rows_skipped'])} blank source rows were skipped and revisions were collapsed to the latest published version.",
+        "No temperature data is loaded: heat is visible only through the seasonal shape of demand."])
+
+
 
 
 # =============================================================== TAB 2
@@ -377,112 +483,71 @@ with tabs[2]:
         "The total fleet **drops 17% in 2023** (2.69 million to 2.23 million). INEGI notes that since 2022 a decree to regularize used imported "
         "vehicles affects registrations. I treat 2023 as a series break and never compare across it.",
         "VMRC 'Híbrido' does not separate plug-in from conventional hybrids and is *lower* than RAIAVL's cumulative hybrid sales, "
-        "so plug-in hybrids are modeled from RAIAVL with an explicit assumption (tab 5), not from VMRC.",
+        "so plug-in hybrids are modeled from RAIAVL with an explicit assumption (tab 4), not from VMRC.",
         "The coverage ratio is calibrated on a single year of change (2024 to 2025). It is a calibration, not a law."])
 
 
 # =============================================================== TAB 4
 with tabs[3]:
-    st.markdown("## When does the Northeast grid peak?")
-    st.markdown("Hourly demand estimate for CENACE's Northeast (NES) balance area, which includes Monterrey. "
-                "EV charging adds load on top of this shape.")
+    st.markdown("## Will EVs hurt the grid?")
+    s35, sh35, r35 = uplift_at(2035, 0.25, UNMANAGED, DEFAULT_A)
+    base_year = tipping_table(DEFAULT_A).loc[UNMANAGED, BASE_G]
+    reserve = ref_value(ctx["reference"], "operating_reserve_margin_actual")
+    alert = ref_value(ctx["reference"], "reserve_margin_alert_threshold")
+    emerg = ref_value(ctx["reference"], "reserve_margin_emergency_threshold")
+    organic = r35.baseline_nl.max() - REF_DAY.max() * DEFAULT_A.nl_share     # growth of the NL peak 2025 -> 2035, no EVs
 
-    g1, g2, g3 = st.columns([1.5, 1.2, 1.1])
-    yr_lo, yr_hi = g1.slider("Years", 2020, int(gcomp["fecha"].dt.year.max()), (2021, int(gcomp["fecha"].dt.year.max())), key="yrs4")
-    season = g2.selectbox("Season (for the two lower charts)", ["All year", "Summer (May–Sep)", "Winter (Dec–Feb)",
-                                                              "Shoulder (Mar–Apr, Oct–Nov)"], key="season4")
-    daytype = g3.radio("Days", ["All days", "Weekdays", "Weekends"], horizontal=True, key="day4")
+    st.markdown(f"<div class='answer'><b>Regionally no, locally yes.</b> The national grid kept a {reserve:.1f}% reserve in summer 2026 "
+                f"and EV charging adds {r35.peak_uplift_pct:.1f}% to the 2035 peak (base; 5% around {base_year}). "
+                "But 2026's outages came from aging distribution transformers, which is where home charging concentrates.</div>",
+                unsafe_allow_html=True)
 
-    gw = gcomp[(gcomp["fecha"].dt.year >= yr_lo) & (gcomp["fecha"].dt.year <= yr_hi)]
-    daily = gw.groupby("fecha")["demand_mw"].max()
-    roll = daily.rolling(30, min_periods=15).mean()
-    fig = go.Figure()
-    viz.line(fig, daily.index, daily.values, "Peak hour of each day", C.COLORS["muted"], width=1, opacity=0.8, unit=" MW")
-    viz.line(fig, roll.index, roll.values, "30-day average of daily peak", C.COLORS["grid"], width=2.5, unit=" MW")
-    viz.style(fig, height=380, ytitle="Demand, MW")
-    lo, hi = daily.index.min(), daily.index.max()
-    if gq.get("preliminary_from") and pd.Timestamp(gq["preliminary_from"]) < hi:
-        pf = pd.Timestamp(gq["preliminary_from"])
-        fig.add_shape(type="rect", x0=pf, x1=hi, y0=0, y1=1, yref="paper", line=dict(width=0),
-                      fillcolor="rgba(137,135,129,0.2)", layer="below")
-        fig.add_annotation(x=pf, y=0.04, yref="paper", text="Preliminary", showarrow=False, xanchor="left", xshift=3,
-                           font=dict(size=11, color=C.COLORS["ink2"]))
-    st.plotly_chart(fig, width="stretch")
-    table_view(pd.DataFrame({"daily peak MW": daily.round(0), "30-day avg": roll.round(0)}).tail(400), "Show the data (latest 400 days)")
+    b1, b2 = st.columns(2)
+    with b1:
+        st.markdown("#### Spare generation at the 2026 summer peak")
+        figr = go.Figure()
+        for x0, x1, col, lab in [(0, emerg, "rgba(227,73,72,0.30)", "Emergency"), (emerg, alert, "rgba(237,161,0,0.30)", "Alert"),
+                                 (alert, 20, "rgba(137,135,129,0.12)", "Normal")]:
+            figr.add_shape(type="rect", x0=x0, x1=x1, y0=0, y1=1, yref="paper", line=dict(width=0), fillcolor=col, layer="below")
+            figr.add_annotation(x=(x0 + x1) / 2, y=1, yref="paper", text=lab, showarrow=False, yanchor="bottom",
+                                font=dict(size=11, color=C.COLORS["ink2"]))
+        figr.add_trace(go.Bar(x=[reserve], y=["Reserve margin"], orientation="h", width=0.35, marker_color=C.COLORS["grid"],
+                              text=[f"{reserve:.2f}%"], textposition="outside",
+                              hovertemplate="%{x:.2f}%<extra>Operating reserve, summer 2026</extra>"))
+        for v in (alert, emerg):
+            figr.add_vline(x=v, line=dict(color=C.COLORS["ink2"], width=1.5))
+        viz.style(figr, height=200, legend=False, hover="closest", xtitle="Operating reserve margin, %")
+        figr.update_xaxes(range=[0, 20], ticksuffix="%")
+        figr.update_yaxes(showticklabels=False)
+        st.plotly_chart(figr, width="stretch")
+        st.caption("National grid (SIN), summer 2026 peak of about 55,600 MW. Sources: Forbes México (CENACE) for the margin; "
+                   "El Financiero for the 3% and 6% thresholds.")
+    with b2:
+        st.markdown("#### Nuevo León peak in 2035, MW")
+        bars = pd.Series({"EV charging, busiest hour": r35.ev_max_mw, "Ordinary demand growth, 2025–2035": organic,
+                          "NL peak 2035 without EVs": r35.baseline_nl.max()})
+        figb3 = go.Figure(go.Bar(x=bars.values, y=bars.index, orientation="h",
+                                 marker_color=[C.COLORS["BEV"], C.COLORS["grid"], C.COLORS["muted"]], marker_cornerradius=4,
+                                 text=[f"{fmt(v)} MW" for v in bars.values], textposition="outside",
+                                 hovertemplate="%{x:,.0f} MW<extra></extra>"))
+        viz.style(figb3, height=200, legend=False, hover="closest")
+        figb3.update_xaxes(range=[0, bars.max() * 1.2], showticklabels=False)
+        st.plotly_chart(figb3, width="stretch")
+        st.caption("Source: this dashboard's model (CENACE NES demand × 50% Nuevo León share placeholder, base growth, unmanaged charging).")
 
-    season_months = {"All year": range(1, 13), "Summer (May–Sep)": (5, 6, 7, 8, 9), "Winter (Dec–Feb)": (12, 1, 2),
-                     "Shoulder (Mar–Apr, Oct–Nov)": (3, 4, 10, 11)}
-    gd = gw
-    if daytype == "Weekdays":
-        gd = gd[gd["fecha"].dt.weekday < 5]
-    elif daytype == "Weekends":
-        gd = gd[gd["fecha"].dt.weekday >= 5]
+    coverage("Regional vs local: what to keep in mind", [
+        "The grid series is the CENACE **Northeast (NES) balance area**, not Monterrey alone. Local overloads on neighborhood "
+        "feeders and transformers are invisible in regional data and could matter long before the system does.",
+        "The vehicle registry misses brands that do not report (BYD, and per press reports Tesla): it sees only about "
+        f"{est.registry_share_2025:.0%} of the battery-electric fleet that INEGI's registration data counts. Tab 3 shows how this is handled.",
+        "Everything after 2026 is a scenario, not a forecast. The Nuevo León share of the regional grid is a placeholder (50%).",
+        f"A residential distribution transformer typically serves {ctx['reference'].set_index('metric').loc['homes_per_distribution_transformer', 'value']} "
+        "homes (typical range, US patent 9403441): a few home chargers on one street can overload it while the system has spare capacity.",
+        "The reserve margin is for Mexico's national grid (SIN), not Nuevo León: it says whether there is enough generation, "
+        "not whether local wires can deliver it."])
 
-    h1, h2 = st.columns(2)
-    with h1:
-        st.markdown("#### Hour of day × month: when demand is highest")
-        pv = gd.assign(m=gd["fecha"].dt.month).pivot_table(index="hour", columns="m", values="demand_mw", aggfunc="mean")
-        pv = pv.reindex(index=range(24), columns=range(1, 13))
-        ramp = [[i / 6, c] for i, c in enumerate([C.BLUE_RAMP[k] for k in (100, 200, 300, 450, 550, 650, 700)])]
-        figh = go.Figure(go.Heatmap(z=pv.values, x=MONTH_ABBR, y=HOURS, colorscale=ramp, xgap=2, ygap=2,
-                                    colorbar=dict(title="MW", thickness=12),
-                                    hovertemplate="%{x} · %{y}<br>%{z:,.0f} MW<extra></extra>"))
-        viz.style(figh, height=480, legend=False, hover="closest")
-        figh.update_yaxes(autorange="reversed", dtick=2, gridcolor="rgba(0,0,0,0)")
-        st.plotly_chart(figh, width="stretch")
-        st.caption("Average demand. Evening hours from May to September are the system's binding period: "
-                   "air-conditioning load, exactly when EVs are plugged in after work.")
-    with h2:
-        st.markdown("#### Average daily shape by season")
-        figp = go.Figure()
-        seasons = [("Summer (May–Sep)", "#e34948"), ("Winter (Dec–Feb)", "#6250d6"), ("Shoulder (Mar–Apr, Oct–Nov)", C.COLORS["muted"])]
-        pk = {}
-        for name, col in seasons:
-            sub = gd[gd["fecha"].dt.month.isin(season_months[name])]
-            if sub.empty:
-                continue
-            prof = sub.groupby("hour")["demand_mw"].mean().reindex(range(24))
-            pk[name] = (int(prof.idxmax()), float(prof.max()))
-            viz.line(figp, HOURS, prof.values, name.split(" (")[0], col, width=3 if name == season else 2, unit=" MW")
-            viz.end_label(figp, HOURS[-1], prof.values[-1], name.split(" (")[0], dx=4)
-        viz.style(figp, height=480, ytitle="Average demand, MW")
-        figp.update_xaxes(dtick=3)
-        st.plotly_chart(figp, width="stretch")
-        if pk:
-            txt = "; ".join(f"{n.split(' (')[0].lower()} peak at {h:02d}:00 ({fmt(v)} MW)" for n, (h, v) in pk.items())
-            st.caption("Average-day peak: " + txt + ".")
-
-    kp = st.columns(4)
-    kp[0].metric("Highest hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
-    kp[1].metric("Average demand, 2025", f"{fmt(gstats['mean'][2025])} MW")
-    kp[2].metric("Peak growth 2022–2025", f"{gstats['cagr_peak']:.1%} / yr")
-    kp[3].metric("Average growth 2022–2025", f"{gstats['cagr_mean']:.1%} / yr")
-
-    with st.expander("Why this series starts in 2020, not 2016"):
-        m = grid.set_index("ts").resample("MS").agg(demand=("demand_mw", "mean"), gen=("gen_mw", "mean"))
-        figb = go.Figure()
-        viz.line(figb, m.index, m["gen"], "Generation in the area", C.COLORS["muted"], width=2, unit=" MW")
-        viz.line(figb, m.index, m["demand"], "'Demand by balance' as published", C.COLORS["grid"], width=2.5, unit=" MW")
-        viz.style(figb, height=330, ytitle="Monthly average, MW")
-        st.plotly_chart(figb, width="stretch")
-        st.caption(f"Before 2020 the published 'demand by balance' equals generation (about {fmt(gq['mean_demand_mw_by_year']['2019'])} MW in 2019). "
-                   f"From January 2020 the net flows out of the area, about {fmt(gq['mean_generation_mw_by_year']['2020'] - gq['mean_demand_mw_by_year']['2020'])} MW, "
-                   "are subtracted and the series drops by almost half although nothing physical changed. Only 2020 onward is comparable demand, "
-                   "so grid analysis covers about 6.9 years, not ten. The sales and fleet analysis cover the full decade.")
-
-    coverage("Coverage and caveats for this tab", [
-        "**NES is a regional balance area, not Monterrey.** It includes load outside Nuevo León, and neighborhood-level stress cannot be seen here.",
-        "'Demand by balance' is an **estimate** (generation plus flows with other areas), not metered consumption.",
-        f"The latest {gq['preliminary_days']} days (from {gq['preliminary_from']}) are preliminary first estimates; CENACE later revises them.",
-        "2020 (COVID) and the February 2021 storm are anomalous years, so growth is computed over 2022–2025.",
-        f"Days with 23 hours before 2023 are daylight-saving spring-forward days, not missing data. "
-        f"{fmt(gq['rows_skipped'])} blank source rows were skipped and revisions were collapsed to the latest published version.",
-        "No temperature data is loaded: heat is visible only through the seasonal shape of demand."])
-
-
-# =============================================================== TAB 5
-with tabs[4]:
-    st.markdown("## What happens when EVs meet the evening peak?")
+    st.divider()
+    st.markdown("### What happens when EVs meet the evening peak?")
     st.markdown("Pick a growth scenario. The model adds EV charging to the Northeast grid's load on its 2025 peak day, scaled to "
                 "Nuevo León. **Only the grid shape and the 2024–25 fleet are measured; everything else is an assumption, shown below.**")
 
@@ -578,23 +643,32 @@ with tabs[4]:
         "Regional totals hide local stress: a street with many EVs can overload a transformer while the system looks fine."])
 
 
-# =============================================================== TAB 6
-with tabs[5]:
-    st.markdown("## What this data cannot see")
-    st.markdown(
-        "- **Brands that do not report.** BYD, and per press reports Tesla, are missing from RAIAVL. The registered fleet is about "
-        f"{1 / est.registry_share_2025:.0f}× the registry's cumulative sales, so true adoption is larger than any sales chart shows.\n"
-        "- **Where in the metro EVs are.** Both INEGI tables stop at the state; CENACE's series is a region. Feeder and transformer load "
-        "(San Pedro, Monterrey, Apodaca…) is where stress would appear first.\n"
-        "- **Origin, price and plant-level detail.** RAIAVL has no imports by country of origin, prices or plant output, so it "
-        "cannot explain *why* sales move (tariffs, Chinese entrants, incentives).\n"
-        "- **Charging behavior.** Nobody here has measured when Nuevo León's EV owners charge. The hourly shapes are assumptions.\n"
-        "- **Heat.** Temperature drives the peak and is not loaded; demand's seasonal shape is the only proxy.\n"
-        "- **Series breaks.** CENACE's definition change (Jan 2020) and INEGI's fleet break (2023) limit how far back the grid "
-        "and stock comparisons go.")
 
-    st.markdown("## Recommendations")
-    st.markdown(
+
+# =============================================================== TAB 5
+with tabs[4]:
+    st.markdown("## What can you do?")
+    plan = ctx["plan"].sort_values("amount_million_mxn")
+    ev_money = plan.loc[plan["mentions_ev_charging"].str.lower() == "yes", "amount_million_mxn"].sum()
+    r1, r2 = st.columns([1, 1.25])
+    with r1:
+        st.markdown("#### The NL + CFE grid plan, million MXN")
+        st.markdown(f"<span style='color:{C.COLORS['BEV']};font-size:1.1rem'><b>{ev_money:,.0f} earmarked for EV charging</b></span>",
+                    unsafe_allow_html=True)
+        figp = go.Figure(go.Bar(x=plan["amount_million_mxn"], y=plan["component"].str.replace(r" \(.*\)", "", regex=True),
+                                orientation="h", marker_color=C.COLORS["grid"], marker_cornerradius=4,
+                                text=[f"{v:,.0f}" for v in plan["amount_million_mxn"]], textposition="outside",
+                                customdata=plan[["funder", "what_it_buys"]].to_numpy(),
+                                hovertemplate="%{x:,.0f} M MXN · %{customdata[0]}<br>%{customdata[1]}<extra></extra>"))
+        viz.style(figp, height=300, legend=False, hover="closest")
+        figp.update_xaxes(range=[0, plan["amount_million_mxn"].max() * 1.3], showticklabels=False)
+        st.plotly_chart(figp, width="stretch")
+        st.caption(f"Source: Gobierno de Nuevo León, 18 Aug 2026. The three parts add to {plan['amount_million_mxn'].sum():,.0f} "
+                   "million MXN; the announcement rounds to 10,000. Transmission (6 projects) and distribution are CFE; mobile substations are the State. "
+                   "Hover a bar for what it buys.")
+    with r2:
+        st.markdown("#### Recommendations")
+        st.markdown(
         "1. **Do not fund generation or transmission *for EVs* now.** Ordinary demand growth is the bigger driver for the next decade, and EV "
         "charging stays below a 5% rise in the peak until the mid-2030s under base growth.\n"
         "2. **Watch the growth rate first, charging behavior second.** In the model, how fast plug-in sales grow moves the 5% date by "
@@ -608,13 +682,33 @@ with tabs[5]:
         "through 2027, the 5% rise moves to about 2034, so start grid planning with CFE by about 2030. Re-run this dashboard each "
         "year with new INEGI and CENACE data.")
 
-    st.markdown("## Sources")
-    st.markdown(
+
+    with st.expander("What this data cannot see"):
+        st.markdown(
+        "- **Brands that do not report.** BYD, and per press reports Tesla, are missing from RAIAVL. The registered fleet is about "
+        f"{1 / est.registry_share_2025:.0f}× the registry's cumulative sales, so true adoption is larger than any sales chart shows.\n"
+        "- **Where in the metro EVs are.** Both INEGI tables stop at the state; CENACE's series is a region. Feeder and transformer load "
+        "(San Pedro, Monterrey, Apodaca…) is where stress would appear first.\n"
+        "- **Origin, price and plant-level detail.** RAIAVL has no imports by country of origin, prices or plant output, so it "
+        "cannot explain *why* sales move (tariffs, Chinese entrants, incentives).\n"
+        "- **Charging behavior.** Nobody here has measured when Nuevo León's EV owners charge. The hourly shapes are assumptions.\n"
+        "- **Heat.** Temperature drives the peak and is not loaded; demand's seasonal shape is the only proxy.\n"
+        "- **Series breaks.** CENACE's definition change (Jan 2020) and INEGI's fleet break (2023) limit how far back the grid "
+        "and stock comparisons go.")
+
+    with st.expander("Sources"):
+        st.markdown(
         "- INEGI. *Registro Administrativo de la Industria Automotriz de Vehículos Ligeros (RAIAVL)*, tabulado Híbridos y eléctricos.\n"
         "- INEGI. *Estadística de Vehículos de Motor Registrados en Circulación (VMRC)*, Nuevo León, consulta interactiva.\n"
         "- CENACE. *Estimación de Demanda por Balance*, área NES (Noreste); region codes from CENACE's Demanda Regional page.\n"
         "- El Financiero, 18 June 2026, Vemo charging stations in Nuevo León.\n"
         "- El Imparcial, 22–23 July 2025: an industry executive (Huawei Digital Power) says the grid shows signs of saturation, "
-        "the claim this dashboard tests.")
+        "the claim this dashboard tests.\n"
+        "- CFE. *Programa de Ampliación y Modernización de las Redes Generales de Distribución (PAM RGD)*, 2019–2033 to 2025–2039 editions: "
+        "SAIDI, SAIFI and CAIDI for the Golfo Norte division.\n"
+        "- Gobierno de Nuevo León, 18 Aug 2026: NL + CFE plan to strengthen the grid.\n"
+        "- Forbes México (CENACE data), 2026: reserve margin, peak demand, installed capacity. El Financiero, 6 Jun 2024: alert and emergency thresholds.\n"
+        "- 2026 events: Posta, Zeta Tijuana, Diario de Yucatán, N+ (CFE data), Líder Empresarial (CAINTRA), H. Congreso de Nuevo León. "
+        "Every row in `data/context/grid_context_2026.csv` carries its own link.")
     st.markdown("<span class='small'>Code and pipeline: see README. Data processing is done in code (pipeline/), not by hand.</span>",
                 unsafe_allow_html=True)

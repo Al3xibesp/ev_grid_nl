@@ -15,6 +15,7 @@ GRID_HOURLY = PROCESSED / "nes_hourly.csv.gz"
 RAIAVL_CLEAN = PROCESSED / "raiavl_clean.csv"
 FLEET_CLEAN = PROCESSED / "fleet_nl.csv"
 QUALITY_JSON = PROCESSED / "data_quality.json"
+CONTEXT = ROOT / "data" / "context"         # hand-collected context tables (CFE, CENACE, press); see load_context.py
 
 # CENACE changed what "Estimacion de Demanda por Balance" contains on this date:
 # before it the column equals generation (net flows to other regions are NOT
