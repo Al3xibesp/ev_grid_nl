@@ -186,30 +186,46 @@ with tabs[0]:
     fig.add_hline(y=float(rel["saidi_limit_min"].iloc[0]), line=dict(color="#e34948", width=1, dash="dash"),
                   annotation_text="CFE limit: 50 min", annotation_position="top left",
                   annotation_font=dict(size=11, color=C.COLORS["ink2"]))
-    lanes = {"outage": 44, "cause": 38, "survey": 32, "reserve": 26, "investment": 20, "political": 14}
-    ev = ev26.copy()
-    ev["when"] = ev["date"].dt.strftime("%d %b %Y")
-    ev.loc[ev["description"].str.contains("placeholder"), "when"] = ev["date"].dt.strftime("%B %Y")
-    for etype, sub in ev.groupby("event_type", sort=False):
-        fig.add_trace(go.Scatter(
-            x=sub["date"], y=[lanes.get(etype, 8)] * len(sub), mode="markers", name=f"2026 event: {etype}", showlegend=False,
-            marker=dict(size=10, color=C.COLORS["BEV"] if etype == "outage" else C.COLORS["muted"],
-                        line=dict(width=1, color="white")),
-            customdata=sub[["when", "place", "description", "source"]].to_numpy(),
-            hovertemplate="<b>%{customdata[0]}</b> · %{customdata[1]}<br>%{customdata[2]}<br>"
-                          "<i>Source: %{customdata[3]}</i><extra></extra>"))
     viz.style(fig, height=380, ytitle="Minutes per user per year", hover="closest", legend=False)
     fig.update_yaxes(range=[0, 55])
     fig.update_xaxes(range=["2016-10-01", "2026-12-31"], dtick="M12", tickformat="%Y")
     st.plotly_chart(fig, width="stretch")
-    st.caption("Line: SAIDI, minutes without power per user per year, for CFE's Golfo Norte distribution division (CFE, PAM RGD 2019–2033 to 2025–2039 editions). "
-               "Dots: 2026 events (hover for detail and source); their height only separates event types. Blue = outages.")
+    st.caption("SAIDI = minutes without power per user per year, CFE Golfo Norte distribution division. "
+               "Source: CFE, PAM RGD 2019–2033 to 2025–2039 editions.")
+
+    # 2026 events on their own time axis: one row; labels alternate above/below and end at their own line,
+    # so a label never crosses another event's line
+    st.markdown("#### What happened in 2026")
+    ev = ev26.sort_values("date").reset_index(drop=True)
+    ev["when"] = ev["date"].dt.strftime("%d %b %Y")
+    ev.loc[ev["description"].str.contains("placeholder"), "when"] = ev["date"].dt.strftime("%B %Y")
+    is_outage = ev["event_type"].eq("outage")
+    figt = go.Figure(go.Scatter(
+        x=ev["date"], y=[0] * len(ev), mode="markers",
+        marker=dict(size=12, color=np.where(is_outage, C.COLORS["BEV"], C.COLORS["muted"]), line=dict(width=1.5, color="white")),
+        customdata=ev[["when", "place", "description", "source"]].to_numpy(),
+        hovertemplate="<b>%{customdata[0]}</b> · %{customdata[1]}<br>%{customdata[2]}<br>"
+                      "<i>Source: %{customdata[3]}</i><extra></extra>"))
+    offsets = [-34, 34, -72, 72]                                   # px: below, above, further below, further above
+    for n, r in ev.iterrows():
+        figt.add_annotation(x=r["date"], y=0, text=r["label"], showarrow=True, arrowhead=0, arrowwidth=1,
+                            arrowcolor=C.COLORS["ink2"], ax=0, ay=offsets[n % 4], xanchor="right",
+                            font=dict(size=11, color=C.COLORS["BEV"] if r["event_type"] == "outage" else C.COLORS["ink2"]))
+    figt.add_hline(y=0, line=dict(color=C.COLORS["muted"], width=1))
+    viz.style(figt, height=230, legend=False, hover="closest")
+    figt.update_yaxes(visible=False, range=[-1, 1])
+    figt.update_xaxes(range=["2026-06-01", "2026-10-05"], dtick="M1", tickformat="%b %Y", showgrid=False)
+    figt.update_layout(margin=dict(t=10, b=30))
+    st.plotly_chart(figt, width="stretch")
+    st.caption("Blue = outages. Hover a dot for the full description and source; every event and link is in "
+               "data/context/grid_context_2026.csv. End-of-period figures (H1 survey, Jan–Aug total) sit on the period's last day.")
     coverage("About these reliability numbers", [
         "SAIDI is an **average for the whole Golfo Norte division**, wider than the Monterrey metro. A falling average can hide "
         "neighborhoods with repeated outages.",
         "CFE publishes each year's figures in a later planning report (PAM RGD), so 2025 and 2026 are not available yet.",
         "The 2026 events come from press and government statements, not from a measured series; they show what happened, not how much.",
-        "The July 2026 outage has a month but no exact day; it is plotted on the 15th."])
+        "The July 2026 outage has a month but no exact day; it is plotted on the 15th. Two figures are national, not Nuevo León: "
+        "the 14.8% reserve and the 317k interruptions."])
 
     st.divider()
     st.markdown("### When does the Northeast grid peak?")
@@ -505,23 +521,21 @@ with tabs[3]:
     b1, b2 = st.columns(2)
     with b1:
         st.markdown("#### Spare generation at the 2026 summer peak")
-        figr = go.Figure()
-        for x0, x1, col, lab in [(0, emerg, "rgba(227,73,72,0.30)", "Emergency"), (emerg, alert, "rgba(237,161,0,0.30)", "Alert"),
-                                 (alert, 20, "rgba(137,135,129,0.12)", "Normal")]:
-            figr.add_shape(type="rect", x0=x0, x1=x1, y0=0, y1=1, yref="paper", line=dict(width=0), fillcolor=col, layer="below")
-            figr.add_annotation(x=(x0 + x1) / 2, y=1, yref="paper", text=lab, showarrow=False, yanchor="bottom",
-                                font=dict(size=11, color=C.COLORS["ink2"]))
-        figr.add_trace(go.Bar(x=[reserve], y=["Reserve margin"], orientation="h", width=0.35, marker_color=C.COLORS["grid"],
-                              text=[f"{reserve:.2f}%"], textposition="outside",
-                              hovertemplate="%{x:.2f}%<extra>Operating reserve, summer 2026</extra>"))
-        for v in (alert, emerg):
-            figr.add_vline(x=v, line=dict(color=C.COLORS["ink2"], width=1.5))
-        viz.style(figr, height=200, legend=False, hover="closest", xtitle="Operating reserve margin, %")
-        figr.update_xaxes(range=[0, 20], ticksuffix="%")
-        figr.update_yaxes(showticklabels=False)
+        figr = go.Figure(go.Indicator(
+            mode="gauge+number", value=reserve, number=dict(suffix="%", valueformat=".2f", font=dict(size=40)),
+            gauge=dict(
+                axis=dict(range=[0, 20], ticksuffix="%", tickvals=[0, emerg, alert, 10, 15, 20]),   # 20% = chosen scale max
+                bar=dict(color=C.COLORS["grid"], thickness=0.3),
+                steps=[dict(range=[0, emerg], color="rgba(227,73,72,0.45)"),
+                       dict(range=[emerg, alert], color="rgba(237,161,0,0.45)"),
+                       dict(range=[alert, 20], color="rgba(137,135,129,0.15)")],
+                borderwidth=0)))
+        figr.update_layout(height=230, margin=dict(l=30, r=30, t=20, b=10), paper_bgcolor="rgba(0,0,0,0)",
+                           font=dict(color=C.COLORS["ink"]))
         st.plotly_chart(figr, width="stretch")
-        st.caption("National grid (SIN), summer 2026 peak of about 55,600 MW. Sources: Forbes México (CENACE) for the margin; "
-                   "El Financiero for the 3% and 6% thresholds.")
+        st.caption(f"Operating reserve margin, national grid (SIN), summer 2026 peak of about 55,600 MW. Red: emergency (< {emerg:g}%); "
+                   f"amber: alert ({emerg:g}–{alert:g}%). The 20% end of the scale is chosen for display. "
+                   "Sources: Forbes México (CENACE) for the margin; El Financiero for the thresholds.")
     with b2:
         st.markdown("#### Nuevo León peak in 2035, MW")
         bars = pd.Series({"EV charging, busiest hour": r35.ev_max_mw, "Ordinary demand growth, 2025–2035": organic,
@@ -530,7 +544,7 @@ with tabs[3]:
                                  marker_color=[C.COLORS["BEV"], C.COLORS["grid"], C.COLORS["muted"]], marker_cornerradius=4,
                                  text=[f"{fmt(v)} MW" for v in bars.values], textposition="outside",
                                  hovertemplate="%{x:,.0f} MW<extra></extra>"))
-        viz.style(figb3, height=200, legend=False, hover="closest")
+        viz.style(figb3, height=230, legend=False, hover="closest")
         figb3.update_xaxes(range=[0, bars.max() * 1.2], showticklabels=False)
         st.plotly_chart(figb3, width="stretch")
         st.caption("Source: this dashboard's model (CENACE NES demand × 50% Nuevo León share placeholder, base growth, unmanaged charging).")
