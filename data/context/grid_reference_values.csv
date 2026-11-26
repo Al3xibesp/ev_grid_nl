@@ -8,3 +8,5 @@ peak_demand_growth_forecast,Mexico SEN,2.8,%/yr,2025-2039,PLADESE planning scena
 consumption_growth_forecast,GCR Noreste,2.8,%/yr,2025-2039,PLADESE planning scenario,JETRO (PLADESE),https://www.jetro.go.jp/ext_images/mexico/electrico/electricoesp1.pdf
 saidi_limit,CFE distribution,50,min/user,,Regulatory limit,CFE PAM RGD,https://www.cfe.gob.mx/distribucion/cumplimiento/Documents/PAM%20RGD%202024-2038%20VF.pdf
 homes_per_distribution_transformer,Residential (typical),4-8,homes,,Typical range,US patent 9403441,https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/9403441
+home_electricity_use,Nuevo León homes,500,kWh/month,,"Reference value the authors use to convert consumption into homes (0.5 MWh per home per month); not a measured residential average","Sisto, Vivas Pacheco & Lara-Díaz (2024), Investigaciones Geográficas 114",https://doi.org/10.14350/rig.60851
+home_charger_power,Level 2 home charger,7.2,kW,,"Maximum power of the Level 2 home units in the EV Project","Idaho National Laboratory, EV Project (2015)",https://avt.inl.gov/sites/default/files/pdf/EVProj/ClusteringInSanDiego.pdf

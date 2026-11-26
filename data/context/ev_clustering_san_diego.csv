@@ -1,0 +1,4 @@
+case,homes,without_ev_kw,with_ev_kw,observed,measure,source,url
+"1 home, 8 p.m.",1,1.02,8.2,yes,"Median household load at 8 p.m., without vs with EV charging","Idaho National Laboratory, EV Project (2015), San Diego 2013 data",https://avt.inl.gov/sites/default/files/pdf/EVProj/ClusteringInSanDiego.pdf
+"3 homes, 3 EVs (3.7 kW chargers)",3,1.9,13.0,yes,"Peak power of three neighboring homes on one transformer (site 4); 1.9 kW = the three homes at midnight without EVs","Idaho National Laboratory, EV Project (2015), San Diego 2013 data",https://avt.inl.gov/sites/default/files/pdf/EVProj/ClusteringInSanDiego.pdf
+"3 homes, 3 EVs (6.6 kW chargers)",3,1.9,21.6,no,"Authors' calculation for the same site with 6.6 kW chargers; sustained at least 2 hours","Idaho National Laboratory, EV Project (2015), San Diego 2013 data",https://avt.inl.gov/sites/default/files/pdf/EVProj/ClusteringInSanDiego.pdf

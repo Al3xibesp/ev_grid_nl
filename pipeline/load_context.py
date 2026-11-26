@@ -11,13 +11,15 @@ from pipeline.config import CONTEXT
 
 
 def load_context() -> dict[str, pd.DataFrame]:
-    """Return the 4 context tables, keyed by short name."""
+    """Return the 5 context tables, keyed by short name."""
     reliability = pd.read_csv(CONTEXT / "golfo_norte_reliability.csv")      # yearly SAIDI/SAIFI/CAIDI vs CFE limits
     reference = pd.read_csv(CONTEXT / "grid_reference_values.csv",
                             dtype={"value": str})                          # text: one value is a range ("4-8")
     events = pd.read_csv(CONTEXT / "grid_context_2026.csv", parse_dates=["date"])
     plan = pd.read_csv(CONTEXT / "nl_cfe_plan_2026.csv")
-    return {"reliability": reliability, "reference": reference, "events": events, "plan": plan}
+    clustering = pd.read_csv(CONTEXT / "ev_clustering_san_diego.csv")        # INL: EV charging on shared transformers
+    return {"reliability": reliability, "reference": reference, "events": events, "plan": plan,
+            "clustering": clustering}
 
 
 def ref_value(reference: pd.DataFrame, metric: str) -> float:
