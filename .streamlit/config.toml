@@ -1,13 +1,48 @@
-[theme]
-base = "light"
-primaryColor = "#2a78d6"
-backgroundColor = "#f9f9f7"
-secondaryBackgroundColor = "#efeee9"
-textColor = "#0b0b0b"
-font = "sans serif"
+# Two themes: users switch in the ⋮ menu → Settings → Theme (light, dark or system).
+# Charts follow the active theme because viz.style() does not force text or grid colors.
 
 [server]
 headless = true
+enableStaticServing = true          # serves static/ (the Inter font files)
 
 [browser]
 gatherUsageStats = false
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-400-normal.woff2"
+weight = "400"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-600-normal.woff2"
+weight = "600"
+
+[[theme.fontFaces]]
+family = "Inter"
+url = "app/static/fonts/inter-latin-700-normal.woff2"
+weight = "700"
+
+[theme]
+font = "Inter, sans-serif"
+baseRadius = "0.75rem"
+
+# ---- clean editorial (light)
+[theme.light]
+primaryColor = "#2a78d6"
+backgroundColor = "#f7f6f2"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1a1a19"
+
+[theme.light.sidebar]
+backgroundColor = "#efeee9"
+
+# ---- control room (dark)
+[theme.dark]
+primaryColor = "#4da3ff"
+backgroundColor = "#0f1724"
+secondaryBackgroundColor = "#172234"
+textColor = "#e6ebf2"
+
+[theme.dark.sidebar]
+backgroundColor = "#0b111c"

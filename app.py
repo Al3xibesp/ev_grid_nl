@@ -32,8 +32,9 @@ st.markdown("""
 .block-container {padding-top: 1.6rem; max-width: 1250px;}
 h1 {font-size: 2rem !important; letter-spacing: -0.01em;}
 div[data-testid="stMetricValue"] {font-size: 1.7rem;}
-.small {color:#52514e; font-size:0.9rem;}
-.answer {border-left: 4px solid #2a78d6; padding: 0.4rem 1rem; background:#fcfcfb; margin: 0.5rem 0 1rem 0;}
+.small {opacity: 0.78; font-size:0.9rem;}
+.answer {border-left: 4px solid #2a78d6; padding: 0.5rem 1rem; background: rgba(128,128,128,0.08);
+         border-radius: 0 0.6rem 0.6rem 0; margin: 0.5rem 0 1rem 0;}
 </style>""", unsafe_allow_html=True)
 
 
@@ -98,6 +99,8 @@ with st.sidebar:
         f"{gq['comparable_from']}; last {gq['preliminary_days']} days preliminary.")
     st.markdown("- **Context tables**: CFE reliability reports, CENACE, NL Government and press, 2017–2026 "
                 "(`data/context/`, each row with its source).")
+    st.markdown("<span class='small'>🌓 <b>Light or dark:</b> ⋮ menu (top right) → Settings → Theme.</span>",
+                unsafe_allow_html=True)
     st.markdown("### Reading guide")
     st.markdown("**Grid under pressure → EVs rising → will EVs hurt it? → what can you do?**")
     with st.expander("About this dashboard"):
@@ -239,39 +242,65 @@ with tabs[0]:
 
     st.divider()
     st.markdown("### When does the Northeast grid peak?")
-    st.markdown("Hourly demand estimate for CENACE's Northeast (NES) balance area, which includes Monterrey. "
-                "EV charging adds load on top of this shape.")
+    st.markdown("<span class='small'>Hourly demand estimate for CENACE's Northeast (NES) balance area, which includes Monterrey. "
+                "EV charging adds load on top of this shape.</span>", unsafe_allow_html=True)
 
-    g1, g2, g3 = st.columns([1.5, 1.2, 1.1])
-    yr_lo, yr_hi = g1.slider("Years", 2020, int(gcomp["fecha"].dt.year.max()), (2021, int(gcomp["fecha"].dt.year.max())), key="yrs4")
-    season = g2.selectbox("Season (for the two lower charts)", ["All year", "Summer (May–Sep)", "Winter (Dec–Feb)",
-                                                              "Shoulder (Mar–Apr, Oct–Nov)"], key="season4")
-    daytype = g3.radio("Days", ["All days", "Weekdays", "Weekends"], horizontal=True, key="day4")
+    kp = st.columns(4)                      # feedback 26-11: KPIs above the chart
+    kp[0].metric("Highest hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
+    kp[1].metric("Average demand, 2025", f"{fmt(gstats['mean'][2025])} MW")
+    kp[2].metric("Peak growth 2022–2025", f"{gstats['cagr_peak']:.1%} / yr")
+    kp[3].metric("Average growth 2022–2025", f"{gstats['cagr_mean']:.1%} / yr")
 
-    gw = gcomp[(gcomp["fecha"].dt.year >= yr_lo) & (gcomp["fecha"].dt.year <= yr_hi)]
-    daily = gw.groupby("fecha")["demand_mw"].max()
+    SEASON_MONTHS = {"Summer": (5, 6, 7, 8, 9), "Winter": (12, 1, 2)}
+    SEASON_COLOR = {"Summer": C.COLORS["summer"], "Winter": C.COLORS["winter"], "Other": C.COLORS["muted"]}
+    pick = st.segmented_control("Show", ["All year", "Summer", "Winter"], default="All year", key="season4") or "All year"
+
+    daily = gcomp.groupby("fecha")["demand_mw"].max()
     roll = daily.rolling(30, min_periods=15).mean()
+    season_of = pd.Series("Other", index=daily.index)
+    for name, months in SEASON_MONTHS.items():
+        season_of[daily.index.month.isin(months)] = name
+    shown = ["Summer", "Winter", "Other"] if pick == "All year" else [pick]
+
     fig = go.Figure()
-    viz.line(fig, daily.index, daily.values, "Peak hour of each day", C.COLORS["muted"], width=1, opacity=0.8, unit=" MW")
-    viz.line(fig, roll.index, roll.values, "30-day average of daily peak", C.COLORS["grid"], width=2.5, unit=" MW")
-    viz.style(fig, height=380, ytitle="Demand, MW")
-    lo, hi = daily.index.min(), daily.index.max()
+    for name in shown:                       # one dot per day, coloured by season
+        d_ = daily[season_of == name]
+        fig.add_trace(go.Scatter(x=d_.index, y=d_.values, mode="markers", name=f"{name} days" if name != "Other" else "Spring & autumn days",
+                                 marker=dict(size=4 if name != "Other" else 3, color=SEASON_COLOR[name],
+                                             opacity=0.75 if name != "Other" else 0.35),
+                                 hovertemplate="%{x|%d %b %Y}: %{y:,.0f} MW<extra>" + name + "</extra>"))
+    viz.line(fig, roll.index, roll.values, "30-day average of daily peak (all days)", C.COLORS["grid"], width=2.5, unit=" MW")
+    trend_txt = []
+    for name in [n for n in shown if n != "Other"]:   # straight-line trend through that season's daily peaks
+        d_ = daily[season_of == name]
+        t = (d_.index - d_.index.min()).days.to_numpy() / 365.25
+        slope, icpt = np.polyfit(t, d_.to_numpy(), 1)
+        x_end = [d_.index.min(), d_.index.max()]
+        fig.add_trace(go.Scatter(x=x_end, y=[icpt, icpt + slope * t.max()], mode="lines", name=f"{name} trend",
+                                 line=dict(color=SEASON_COLOR[name], width=3, dash="dash"),
+                                 hovertemplate=f"{name} trend: {slope:+,.0f} MW/yr<extra></extra>"))
+        fig.add_annotation(x=x_end[1], y=icpt + slope * t.max(), text=f"{name}: {slope:+,.0f} MW/yr", showarrow=False,
+                           xanchor="left", xshift=6, font=dict(size=12, color=SEASON_COLOR[name]))
+        trend_txt.append(f"{name.lower()} {slope:+,.0f} MW/yr")
+    viz.style(fig, height=400, ytitle="Daily peak demand, MW", hover="closest")
+    fig.update_layout(margin=dict(r=110))
+    hi = daily.index.max()
     if gq.get("preliminary_from") and pd.Timestamp(gq["preliminary_from"]) < hi:
         pf = pd.Timestamp(gq["preliminary_from"])
         fig.add_shape(type="rect", x0=pf, x1=hi, y0=0, y1=1, yref="paper", line=dict(width=0),
                       fillcolor="rgba(137,135,129,0.2)", layer="below")
         fig.add_annotation(x=pf, y=0.04, yref="paper", text="Preliminary", showarrow=False, xanchor="left", xshift=3,
-                           font=dict(size=11, color=C.COLORS["ink2"]))
+                           font=dict(size=11))
     st.plotly_chart(fig, width="stretch")
-    table_view(pd.DataFrame({"daily peak MW": daily.round(0), "30-day avg": roll.round(0)}).tail(400), "Show the data (latest 400 days)")
+    st.caption(f"Each dot = the highest hour of one day, CENACE NES, {daily.index.min():%Y}–{hi:%Y}. Dashed lines = straight-line "
+               f"trend of each season's daily peaks ({', '.join(trend_txt)}). Summer = May–Sep, winter = Dec–Feb.")
+    table_view(pd.DataFrame({"daily peak MW": daily.round(0), "season": season_of, "30-day avg": roll.round(0)}).tail(400),
+               "Show the data (latest 400 days)")
 
     season_months = {"All year": range(1, 13), "Summer (May–Sep)": (5, 6, 7, 8, 9), "Winter (Dec–Feb)": (12, 1, 2),
                      "Shoulder (Mar–Apr, Oct–Nov)": (3, 4, 10, 11)}
-    gd = gw
-    if daytype == "Weekdays":
-        gd = gd[gd["fecha"].dt.weekday < 5]
-    elif daytype == "Weekends":
-        gd = gd[gd["fecha"].dt.weekday >= 5]
+    season = {"Summer": "Summer (May–Sep)", "Winter": "Winter (Dec–Feb)"}.get(pick, "All year")   # bolds that line below
+    gd = gcomp
 
     h1, h2 = st.columns(2)
     with h1:
@@ -290,7 +319,7 @@ with tabs[0]:
     with h2:
         st.markdown("#### Average daily shape by season")
         figp = go.Figure()
-        seasons = [("Summer (May–Sep)", "#e34948"), ("Winter (Dec–Feb)", "#6250d6"), ("Shoulder (Mar–Apr, Oct–Nov)", C.COLORS["muted"])]
+        seasons = [("Summer (May–Sep)", C.COLORS["summer"]), ("Winter (Dec–Feb)", C.COLORS["winter"]), ("Shoulder (Mar–Apr, Oct–Nov)", C.COLORS["muted"])]
         pk = {}
         for name, col in seasons:
             sub = gd[gd["fecha"].dt.month.isin(season_months[name])]
@@ -306,12 +335,6 @@ with tabs[0]:
         if pk:
             txt = "; ".join(f"{n.split(' (')[0].lower()} peak at {h:02d}:00 ({fmt(v)} MW)" for n, (h, v) in pk.items())
             st.caption("Average-day peak: " + txt + ".")
-
-    kp = st.columns(4)
-    kp[0].metric("Highest hour, 2025", f"{fmt(gstats['peak'][2025])} MW")
-    kp[1].metric("Average demand, 2025", f"{fmt(gstats['mean'][2025])} MW")
-    kp[2].metric("Peak growth 2022–2025", f"{gstats['cagr_peak']:.1%} / yr")
-    kp[3].metric("Average growth 2022–2025", f"{gstats['cagr_mean']:.1%} / yr")
 
     with st.expander("Why this series starts in 2020, not 2016"):
         m = grid.set_index("ts").resample("MS").agg(demand=("demand_mw", "mean"), gen=("gen_mw", "mean"))
@@ -416,6 +439,16 @@ with tabs[1]:
         viz.line(fig2, idx[mask], share, "Nuevo León share of national sales", NL_BLUE, width=2.5, fmt=".1f", unit="%",
                  showlegend=False)
         viz.style(fig2, height=300, ytitle="% of national sales (12-month rolling)", legend=False)
+        # feedback 26-11: explain the ups and downs. The reason (BEV/PHEV mix) only holds when both are selected.
+        if {"bev", "phev"} <= set(sel_techs) and share.notna().any():
+            dip_win = share.loc["2023-01-01":"2024-12-31"].dropna()
+            if not dip_win.empty:
+                fig2.add_annotation(x=dip_win.idxmin(), y=dip_win.min(), text="BEV boom, centred on Mexico City:<br>NL's share falls",
+                                    showarrow=True, arrowhead=0, ax=0, ay=40, font=dict(size=11))
+            last = share.dropna()
+            if last.index.max() >= pd.Timestamp("2025-06-01"):
+                fig2.add_annotation(x=last.index.max(), y=last.iloc[-1], text="Plug-in hybrids return;<br>NL buys more of them",
+                                    showarrow=True, arrowhead=0, ax=-70, ay=-30, xanchor="right", font=dict(size=11))
         st.plotly_chart(fig2, width="stretch")
         st.caption(f"Selected technologies: {', '.join(TECH_LABEL[t] for t in sel_techs)}. "
                    "National total includes the 'No especificado' state row.")
@@ -438,7 +471,12 @@ with tabs[1]:
         "November 2026) can move totals and cannot be isolated here.",
         f"Latest month is **{last_month:%B %Y}**; November and December 2026 do not exist yet. Sales figures are revised figures.",
         f"{rq['state_months_blank']} state-month cells were blank (state did not report) and are counted as zero. "
-        f"'No especificado' ({fmt(rq['no_especificado_units'])} units) is excluded from state views but included in national totals."])
+        f"'No especificado' ({fmt(rq['no_especificado_units'])} units) is excluded from state views but included in national totals.",
+        "**Why Nuevo León's share goes up and down:** mostly the BEV/plug-in-hybrid mix. Nuevo León buys relatively more plug-in "
+        "hybrids (about 41–52% of its plug-in sales vs 24–46% nationally). When battery-electric sales boomed (2022–2024), mostly in "
+        "Mexico City, NL's share fell from 9.6% to 6.4%; as plug-in hybrids came back (2025–2026), it rose to about 10.5%. The ICCT "
+        "reports the same national turn: PHEVs led until 2021, BEVs gained from 2022, and in 2025 PHEV sales grew 97% vs 26% for BEVs "
+        "(ICCT, Market Spotlight Mexico 2025). Panel changes (GAC from 2024, MOTORNATION leaving in 2026) and BYD not reporting also move the share."])
 
 
 # =============================================================== TAB 3
@@ -541,7 +579,7 @@ with tabs[3]:
                        dict(range=[alert, 20], color="rgba(137,135,129,0.15)")],
                 borderwidth=0)))
         figr.update_layout(height=230, margin=dict(l=30, r=30, t=20, b=10), paper_bgcolor="rgba(0,0,0,0)",
-                           font=dict(color=C.COLORS["ink"]))
+                           )
         st.plotly_chart(figr, width="stretch")
         st.caption(f"Operating reserve margin, national grid (SIN), summer 2026 peak of about 55,600 MW. Red: emergency (< {emerg:g}%); "
                    f"amber: alert ({emerg:g}–{alert:g}%). The 20% end of the scale is chosen for display. "
@@ -670,7 +708,7 @@ with tabs[3]:
         y5 = tips[gname]
         if y5 and y5 in ser.index:
             figu.add_trace(go.Scatter(x=[y5], y=[ser[y5]], mode="markers+text", text=[str(y5)], textposition="top left",
-                                      marker=dict(size=10, color=C.COLORS["ink"]), showlegend=False,
+                                      marker=dict(size=10, color=C.COLORS["alert"]), showlegend=False,
                                       hovertemplate=f"{gname}: +%{{y:.1f}}% in {y5}<extra></extra>"))
     st.plotly_chart(figu, width="stretch")
     table_view(pd.DataFrame(paths).round(2), "Show the data (% rise in peak)")
@@ -685,7 +723,7 @@ with tabs[3]:
             xs = [v[i] for v in vals.values()]
             figd.add_trace(go.Scatter(x=[min(xs), max(xs)], y=[lab, lab], mode="lines", showlegend=False,
                                       line=dict(color=C.COLORS["muted"], width=3), hoverinfo="skip"))
-        for (pname, xs), col in zip(vals.items(), [C.COLORS["BEV"], C.BLUE_RAMP[300], C.COLORS["ink"]]):
+        for (pname, xs), col in zip(vals.items(), [C.COLORS["BEV"], C.BLUE_RAMP[300], C.COLORS["alert"]]):
             figd.add_trace(go.Scatter(x=xs, y=labels, mode="markers", name=pname, marker=dict(size=11, color=col),
                                       hovertemplate=f"{pname}, %{{y}} vehicles: +%{{x:.1f}}%<extra></extra>"))
         viz.style(figd, height=340, hover="closest", xtitle=f"Rise in the {HORIZON} peak, %", ytitle="Plug-in fleet")
@@ -749,12 +787,12 @@ with tabs[4]:
 
     def card(n: int, action: str, why: str):
         """Bordered card with the action as title and one line of why; the caller adds the visual inside."""
-        box = st.container(border=True)
+        box = st.container(border=True, height="stretch")      # fills the column: cards in a row share one height
         box.markdown(f"**{n} · {action}**")
         box.markdown(f"<span class='small'>{why}</span>", unsafe_allow_html=True)
         return box
 
-    def big(value: str, label: str, color: str = C.COLORS["ink"]) -> str:
+    def big(value: str, label: str, color: str = "inherit") -> str:
         return (f"<div style='display:inline-block;margin-right:1.6rem'><div style='font-size:2rem;font-weight:600;"
                 f"color:{color};line-height:1.1'>{value}</div><div class='small'>{label}</div></div>")
 
@@ -800,7 +838,7 @@ with tabs[4]:
                                         f"<b>{int(tips_hi)}</b><br>5% rise (High)"]})
         figt6 = go.Figure(go.Scatter(x=steps["year"], y=[0] * 3, mode="markers+text", text=steps["label"],
                                      textposition=["top center", "bottom center", "top center"], textfont=dict(size=12), cliponaxis=False,
-                                     marker=dict(size=12, color=[C.COLORS["muted"], C.COLORS["BEV"], C.COLORS["ink"]]),
+                                     marker=dict(size=12, color=[C.COLORS["muted"], C.COLORS["BEV"], C.COLORS["alert"]]),
                                      hovertemplate="%{x}<extra></extra>"))
         figt6.add_hline(y=0, line=dict(color=C.COLORS["muted"], width=1))
         viz.style(figt6, height=190, legend=False, hover="closest")

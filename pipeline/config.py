@@ -45,12 +45,15 @@ COLORS = {
     "BEV": "#2a78d6",    # slot 1 blue
     "PHEV": "#eb6834",   # slot 2 orange
     "HEV": "#1baf7a",    # slot 3 aqua
-    "grid": "#52514e",   # secondary ink, used for baseline demand
+    "grid": "#7d8796",   # slate: baseline demand; readable on light and dark themes
     "ev_load": "#2a78d6",
     "muted": "#898781",
-    "gridline": "#e1e0d9",
-    "ink": "#0b0b0b",
-    "ink2": "#52514e",
+    "gridline": "rgba(128,128,128,0.18)",
+    "ink": "#8a8a86",    # mid grey: secondary text/marks that must read on both themes
+    "ink2": "#8a8a86",
+    "summer": "#d9453b",
+    "winter": "#7b6ae0",
+    "alert": "#e0a100",
 }
 BLUE_RAMP = {100: "#cde2fb", 150: "#b7d3f6", 200: "#9ec5f4", 250: "#86b6ef", 300: "#6da7ec",
              350: "#5598e7", 400: "#3987e5", 450: "#2a78d6", 500: "#256abf", 550: "#1c5cab",
